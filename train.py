@@ -4,7 +4,7 @@ import joblib
 import sqlite3
 
 from xgboost import XGBRegressor
-from sklearn.model_selection import GridSearchCV, KFold
+from sklearn.model_selection import KFold
 from sklearn.metrics import mean_absolute_error, median_absolute_error, root_mean_squared_error, r2_score
 
 from utils import Utils
@@ -19,7 +19,7 @@ class CCSMLModel:
         self.use_metlin = use_metlin
         self.subclass_frequency_threshold = subclass_frequency_threshold
         self.model = None
-        self.cv_score = None
+        self.cv_metrics = None
         self.metrics = Metrics()
         self.utils = Utils()
         self.seed = 26 if seed is None else seed
@@ -40,60 +40,93 @@ class CCSMLModel:
         )
     
     def fit(self):
-        X_list = []
-        y_list = []
+        X_list, y_list = [], []
         for _, row in pd.read_csv(self.train_file).iterrows():
-            feat_values = self.utils.calculate_descriptors(row['smi'], row['mass'], row['z'], row['instrument'], self.adducts, row['adduct'])
+            feat_values = self.utils.calculate_descriptors(
+                row["smi"], row["mass"], row["z"], row["instrument"],
+                self.adducts, row["adduct"]
+            )
             if feat_values is not None:
                 X_list.append(feat_values)
-                y_list.append(row['ccs'])
+                y_list.append(row["ccs"])
 
-        X_train = np.array(X_list, dtype=float)
-        y_train = np.array(y_list, dtype=float)
+        X = np.array(X_list, dtype=float)
+        y = np.array(y_list, dtype=float)
 
-        # 5-fold CV
-        cv = KFold(n_splits=5, shuffle=True, random_state=self.seed)
-
-        base_model = XGBRegressor(
+        params = dict(
             objective="reg:squarederror",
+            n_estimators=6000,
+            max_depth=10,
+            learning_rate=0.03,
+            subsample=0.9,
+            colsample_bytree=0.9,
+            reg_lambda=30,
+            min_child_weight=5,
+            gamma=1,
             n_jobs=-1,
             tree_method="hist",
-            verbosity=1
+            verbosity=1,
         )
 
-        # Use your params, but as a "grid" of single values
-        param_grid = {
-            "n_estimators":      [6000],
-            "max_depth":         [10],
-            "learning_rate":     [0.03],
-            "subsample":         [0.9],
-            "colsample_bytree":  [0.9],
-            "reg_lambda":        [30],
-            "min_child_weight":  [5],
-            "gamma":             [1],
+        # -------- 5-fold CV --------
+        cv = KFold(n_splits=5, shuffle=True, random_state=self.seed)
+
+        fold_metrics = []
+        for fold, (tr_idx, te_idx) in enumerate(cv.split(X), start=1):
+            model = XGBRegressor(**params)
+            model.fit(X[tr_idx], y[tr_idx])
+
+            y_pred = model.predict(X[te_idx])
+            y_true = y[te_idx]
+
+            abs_err = np.abs(y_true - y_pred)
+            mae_test = float(abs_err.mean())
+            mdae_test = float(np.median(abs_err))
+            rmse_test = float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
+
+            rel_err = abs_err / y_true * 100  # assumes y_true != 0
+            mre_test = float(rel_err.mean())
+            mdre_test = float(np.median(rel_err))
+
+            ss_res = float(np.sum((y_true - y_pred) ** 2))
+            ss_tot = float(np.sum((y_true - np.mean(y_true)) ** 2))
+            r2 = float(1 - ss_res / ss_tot) if ss_tot != 0 else float("nan")
+
+            print(f"\nFold {fold}")
+            print("MAE:", round(mae_test, 4))
+            print("MDAE:", round(mdae_test, 4))
+            print("RMSE:", round(rmse_test, 4))
+            print("MRE (%):", round(mre_test, 4))
+            print("MDRE (%):", round(mdre_test, 4))
+            print("R2:", round(r2, 4))
+
+            fold_metrics.append([mae_test, mdae_test, rmse_test, mre_test, mdre_test, r2])
+
+        fold_metrics = np.array(fold_metrics, dtype=float)
+        mean_metrics = np.nanmean(fold_metrics, axis=0)
+        std_metrics = np.nanstd(fold_metrics, axis=0)
+
+        print("\n=== 5-Fold CV (mean ± std) ===")
+        print("MAE:",  round(mean_metrics[0], 4), "±", round(std_metrics[0], 4))
+        print("MDAE:", round(mean_metrics[1], 4), "±", round(std_metrics[1], 4))
+        print("RMSE:", round(mean_metrics[2], 4), "±", round(std_metrics[2], 4))
+        print("MRE (%):",  round(mean_metrics[3], 4), "±", round(std_metrics[3], 4))
+        print("MDRE (%):", round(mean_metrics[4], 4), "±", round(std_metrics[4], 4))
+        print("R2:",   round(mean_metrics[5], 4), "±", round(std_metrics[5], 4))
+
+        self.cv_metrics = {
+            "mae": (round(mean_metrics[0], 4), round(std_metrics[0], 4)),
+            "mdae": (round(mean_metrics[1], 4), round(std_metrics[1], 4)),
+            "rmse": (round(mean_metrics[2], 4), round(std_metrics[2], 4)),
+            "mre_pct": (round(mean_metrics[3], 4), round(std_metrics[3], 4)),
+            "mdre_pct": (round(mean_metrics[4], 4), round(std_metrics[4], 4)),
+            "r2": (round(mean_metrics[5], 4), round(std_metrics[5], 4)),
         }
 
-        grid = GridSearchCV(
-            estimator=base_model,
-            param_grid=param_grid,
-            scoring="neg_mean_absolute_error",
-            cv=cv,
-            n_jobs=-1,
-            verbose=1,
-            refit=True,  # refit on full training data with best params
-        )
-
-        # Fit with cross-validation
-        grid.fit(X_train, y_train)
-
-        print("Best params:", grid.best_params_)
-        print("Best CV score (MAE):", -grid.best_score_)
-
-        # Save the refit best model
-        self.model = grid.best_estimator_
-        self.cv_score = -grid.best_score_
+        self.model = XGBRegressor(**params)
+        self.model.fit(X, y)
         joblib.dump(self.model, "ccsbase2.joblib")
-    
+
     def predict(self):
         print("Starting Prediction on Test Set")
 
@@ -153,7 +186,4 @@ class CCSMLModel:
         })
         df_out.to_csv("ccs_predictions_test.csv", index=False)
 
-        self.metrics.generate_metrics_table("ccs_predictions_test.csv", self.cv_score)
-        self.metrics.generate_subclass_error_bin_tables("ccs_predictions_test.csv")
-        self.metrics.generate_adduct_error_table("ccs_predictions_test.csv")
-
+        self.metrics.generate_metrics_table("ccs_predictions_test.csv", self.cv_metrics)
