@@ -132,7 +132,7 @@ ccs_model.predict()
 
 ## Inference
 
-To perform inference, make sure the model ``ccsbase2.joblib`` and a inference csv file ``inference_input.csv`` is in your working directory with the exact column names "smi,mass,z,instrument,adduct"
+To perform inference, make sure the model ``ccsbase2.joblib`` and a inference csv file ``inference_input.csv`` is in your working directory with the exact column names "smi,ionmass,z,instrument,adduct"
 
 Then run the file below.
 

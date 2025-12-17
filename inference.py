@@ -7,8 +7,8 @@ from utils import Utils
 
 # ---- CONFIG ----
 DB_PATH = "CCSMLDatabase.db"             # used to fetch adduct list for one-hot encoding
-MODEL_PATH = "ccsbase2.joblib"     # trained model file
-INPUT_CSV = "inference_input.csv"  # must include: smi,mass,z,instrument,adduct
+MODEL_PATH = ""                          # trained model file
+INPUT_CSV = ""                           # must include: smi,ionmass,z,instrument,adduct
 OUTPUT_CSV = "ccs_predictions.csv"
 # ----------------
 
@@ -34,7 +34,7 @@ adducts = load_adducts(DB_PATH)
 df = pd.read_csv(INPUT_CSV)
 
 # Validate columns
-required = ["smi", "mass", "z", "instrument", "adduct"]
+required = ["smi", "ionmass", "z", "instrument", "adduct"]
 missing = [c for c in required if c not in df.columns]
 if missing:
     raise ValueError(f"Missing required columns in {INPUT_CSV}: {missing}")
@@ -46,7 +46,7 @@ valid_idx = []
 for i, row in df.iterrows():
     feats = utils.calculate_descriptors(
         smiles=str(row["smi"]),
-        ion_mass=float(row["mass"]),
+        ion_mass=float(row["ionmass"]),
         charge=int(row["z"]),
         instrument=str(row["instrument"]),
         adducts=adducts,
