@@ -158,10 +158,3 @@ class CCSMLModel:
         self.metrics.generate_subclass_error_bin_tables("ccs_predictions_test.csv")
         self.metrics.generate_adduct_error_table("ccs_predictions_test.csv")
 
-ccs_model = CCSMLModel("CCSMLDB.db", 
-                       "train_data.csv", 
-                       "test_data.csv", 
-                       use_metlin=False, 
-                       subclass_frequency_threshold=40)
-ccs_model.fit()
-ccs_model.predict()

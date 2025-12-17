@@ -131,7 +131,7 @@ class Utils:
 
         return np.array(feature_values)
     
-    # NOT USED IN train.py
+    # NOT USED
     def calculate_3d_descriptors(self, smiles: str, ion_mass: float, charge: int, instrument: str, database_file: str):
         conn = sqlite3.connect(database_file)
         cur = conn.cursor()

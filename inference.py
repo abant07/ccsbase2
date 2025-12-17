@@ -6,7 +6,7 @@ import pandas as pd
 from utils import Utils
 
 # ---- CONFIG ----
-DB_PATH = "CCSMLDB.db"             # used to fetch adduct list for one-hot encoding
+DB_PATH = "CCSMLDatabase.db"             # used to fetch adduct list for one-hot encoding
 MODEL_PATH = "ccsbase2.joblib"     # trained model file
 INPUT_CSV = "inference_input.csv"  # must include: smi,mass,z,instrument,adduct
 OUTPUT_CSV = "ccs_predictions.csv"
