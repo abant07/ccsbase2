@@ -1,34 +1,47 @@
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 
 class Metrics:
     def generate_metrics_table(self, csv_path: str, cv_score=-1, output_image: str = "metrics_table.png"):
         df = pd.read_csv(csv_path)
-        
-        abs_error = abs(df["CCS_True"] - df["CCS_Pred"])
-        rel_error = abs_error / df["CCS_True"] * 100
-        
+
+        y_true = df["CCS_True"]
+        y_pred = df["CCS_Pred"]
+
+        abs_error = (y_true - y_pred).abs()
+        rel_error = abs_error / y_true * 100
+
         mae = abs_error.mean()
+        mdae = abs_error.median()
         mre = rel_error.mean()
         mdre = rel_error.median()
+        rmse = np.sqrt(((y_true - y_pred) ** 2).mean())
+        ss_res = ((y_true - y_pred) ** 2).sum()
+        ss_tot = ((y_true - y_true.mean()) ** 2).sum()
+        r2 = 1 - ss_res / ss_tot
+
         total = len(df)
-        
+
         thresh_1 = (rel_error < 1).sum()
         thresh_2 = (rel_error < 2).sum()
         thresh_3 = (rel_error < 3).sum()
         thresh_5 = (rel_error < 5).sum()
-        
+
         pct_1 = thresh_1 / total * 100
         pct_2 = thresh_2 / total * 100
         pct_3 = thresh_3 / total * 100
         pct_5 = thresh_5 / total * 100
-        
+
         data = {
             "Metric": [
                 "MAE (Å)",
+                "MDAE (Å)",
+                "RMSE (Å)",
+                "R²",
                 "MRE (%)",
                 "MDRE (%)",
-                "CV MDRE (%)",
+                "CV MAE (Å)",
                 "Total predictions (n)",
                 "Predictions <1% RE",
                 "Predictions <2% RE",
@@ -37,6 +50,9 @@ class Metrics:
             ],
             "Value": [
                 f"{mae:.3f}",
+                f"{mdae:.3f}",
+                f"{rmse:.3f}",
+                f"{r2:.3f}",
                 f"{mre:.2f}%",
                 f"{mdre:.2f}%",
                 f"{'NA' if cv_score == -1 else cv_score:.2f}",
@@ -48,9 +64,12 @@ class Metrics:
             ],
             "Description / Note": [
                 "Mean Absolute Error",
+                "Median Absolute Error",
+                "Root Mean Squared Error",
+                "Coefficient of Determination",
                 "Mean Relative Error",
                 "Median Relative Error",
-                "CV Median Relative Error",
+                "CV Median Absolute Error",
                 "",
                 "Extremely accurate predictions",
                 "Accurate predictions",
@@ -58,20 +77,22 @@ class Metrics:
                 "Decent"
             ]
         }
-        
+
         table_df = pd.DataFrame(data)
-        
-        fig, ax = plt.subplots(figsize=(10, 4.2))
+
+        fig, ax = plt.subplots(figsize=(10, 4.8))
         ax.axis("off")
-        table = ax.table(cellText=table_df.values,
-                        colLabels=table_df.columns,
-                        cellLoc="center",
-                        loc="center")
-        
+        table = ax.table(
+            cellText=table_df.values,
+            colLabels=table_df.columns,
+            cellLoc="center",
+            loc="center"
+        )
+
         table.auto_set_font_size(False)
         table.set_fontsize(12)
         table.scale(1.2, 2.4)
-        
+
         for (i, j), cell in table.get_celld().items():
             if i == 0:
                 cell.set_facecolor("#4472C4")
@@ -80,7 +101,7 @@ class Metrics:
             cell.set_height(0.1)
             if j == 0:
                 cell.get_text().set_weight("bold")
-        
+
         plt.savefig(output_image, dpi=300, bbox_inches="tight", facecolor="white")
         plt.close()
         

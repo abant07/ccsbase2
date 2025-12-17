@@ -5,14 +5,14 @@ import sqlite3
 
 from xgboost import XGBRegressor
 from sklearn.model_selection import GridSearchCV, KFold
-from sklearn.metrics import mean_absolute_error, make_scorer
+from sklearn.metrics import mean_absolute_error, median_absolute_error, root_mean_squared_error, r2_score
 
 from utils import Utils
 from metrics import Metrics
 
 class CCSMLModel:
     
-    def __init__(self, database_file, train_filename, test_filename, use_metlin=True, subclass_frequency_threshold=None):
+    def __init__(self, database_file, train_filename, test_filename, seed=None, use_metlin=True, subclass_frequency_threshold=None):
         self.database_file = database_file
         self.train_file = train_filename
         self.test_file = test_filename
@@ -22,6 +22,7 @@ class CCSMLModel:
         self.cv_score = None
         self.metrics = Metrics()
         self.utils = Utils()
+        self.seed = 26 if seed is None else seed
 
         conn = sqlite3.connect(database_file)
         query = "SELECT DISTINCT adduct FROM master_clean"
@@ -33,20 +34,12 @@ class CCSMLModel:
             train_csv_path=self.train_file,
             test_csv_path=self.test_file,
             test_size=0.2,
-            random_state=26,
+            random_state=self.seed,
             use_metlin=use_metlin,
             subclass_frequency_threshold=subclass_frequency_threshold
         )
     
     def fit(self):
-        def mdre(y_true, y_pred):
-            # relative error, safe division
-            denom = np.where(np.abs(y_true) < 1e-8, np.nan, np.abs(y_true))
-            rel = np.abs(y_true - y_pred) / denom
-            return np.nanmedian(rel)
-        
-        mdre_scorer = make_scorer(mdre, greater_is_better=False)
-
         X_list = []
         y_list = []
         for _, row in pd.read_csv(self.train_file).iterrows():
@@ -59,7 +52,7 @@ class CCSMLModel:
         y_train = np.array(y_list, dtype=float)
 
         # 5-fold CV
-        cv = KFold(n_splits=5, shuffle=True, random_state=26)
+        cv = KFold(n_splits=5, shuffle=True, random_state=self.seed)
 
         base_model = XGBRegressor(
             objective="reg:squarederror",
@@ -83,7 +76,7 @@ class CCSMLModel:
         grid = GridSearchCV(
             estimator=base_model,
             param_grid=param_grid,
-            scoring=mdre_scorer,
+            scoring="neg_mean_absolute_error",
             cv=cv,
             n_jobs=-1,
             verbose=1,
@@ -94,11 +87,11 @@ class CCSMLModel:
         grid.fit(X_train, y_train)
 
         print("Best params:", grid.best_params_)
-        print("Best CV score (MdRE):", -grid.best_score_ * 100)
+        print("Best CV score (MAE):", -grid.best_score_)
 
         # Save the refit best model
         self.model = grid.best_estimator_
-        self.cv_score = -grid.best_score_ * 100
+        self.cv_score = -grid.best_score_
         joblib.dump(self.model, "ccsbase2.joblib")
     
     def predict(self):
@@ -131,13 +124,19 @@ class CCSMLModel:
         y_pred_test = self.model.predict(X_test)
 
         mae_test = mean_absolute_error(y_test, y_pred_test)
+        mdae_test = median_absolute_error(y_test, y_pred_test)
+        r2 = r2_score(y_test, y_pred_test)
+        rmse_test = root_mean_squared_error(y_test, y_pred_test)
         mre_test = mean_relative_error(y_test, y_pred_test)
         mdre_test = median_relative_error(y_test, y_pred_test)
 
         print("\n=== Test metrics ===")
-        print("MAE :", round(mae_test, 4))
+        print("MAE:", round(mae_test, 4))
+        print("MDAE:", round(mdae_test, 4))
+        print("RMSE:", round(rmse_test, 4))
         print("MRE (%):", round(mre_test, 4))
         print("MDRE (%):", round(mdre_test, 4))
+        print("R2:", round(r2, 4))
 
 
         # === Save predictions ===

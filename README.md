@@ -19,7 +19,7 @@ pip install numpy pandas scikit-learn rdkit xgboost joblib requests matplotlib
 ## Building Database
 
 ### Build Main Database
-CCSbase2.0 aggregates across the 5 different datasets listed below. AllCCS was obtained by downloading chemicals manually using their online webpage.
+CCSbase2.0 aggregates across the 5 different datasets listed below. AllCCS was obtained by downloading chemicals manually using their online database.
 
 
 #### CCSBase: https://ccsbase.net/
@@ -35,11 +35,11 @@ CCSbase2.0 aggregates across the 5 different datasets listed below. AllCCS was o
 
 The full dataset used for our models, including prebuilt 3D conformers, is available for download. In addition, model weights are provided for models trained under different dataset configurations.
 
-## Prebuilt Database
+### Prebuilt Database
 - [CCSMLDatabase](https://drive.google.com/file/d/1NQy1ZcuRwRlZv2scIgqvrvsFDLFhEewx/view?usp=drive_link)
 
 
-## Model Weights
+### Model Weights
 - [Trained with Full Dataset](https://drive.google.com/file/d/1gIwU1uCSAY__sjbu3eCLDnJ8KqZ6B06E/view?usp=sharing)
 
 - [Trained without METLIN](https://drive.google.com/file/d/1OTsnFYngu1EtKoHOkks6lS_HHEgYnh1B/view?usp=sharing)
@@ -50,11 +50,11 @@ The full dataset used for our models, including prebuilt 3D conformers, is avail
 
 Alternatively, you can build the database from scratch. Run the code below in a separate file. Please note that this entire process takes a very long time as thousands of API calls are being made.
 
-We advise you to run this in Google Colab due to Pubchem rate limiting IP addresses causing APIs to retrieve a "ServerBusy" error. Because of this, you may need to run ``ccsml.find_smiles()`` multiple times while commenting out the rest of the method calls. ClassyFire also does rate limiting, so you will need to run ``ccsml.find_inchikey()`` multiple times while commenting out all other method calls.
+We advise you to run this in Google Colab due to PubChem rate limiting IP addresses which causes APIs to retrieve a "ServerBusy" error. Because of this, you may need to run ``ccsml.find_smiles()`` multiple times while commenting out the rest of the method calls. ClassyFire also does rate limiting, so you will need to run ``ccsml.find_inchikey()`` multiple times while commenting out all other method calls.
 
 You will also need to run ``ccsml.find_inchikey()`` at the end which calls Pubchem API to retrieve InChiKey when given SMILES string. This is to obtain InChiKeys for CCSbase datapoints since CCSbase stores SMILES, but not InChiKeys. 
 
-In total, this process takes 1-2 days depending on the number of rate limit error obtained.
+In total, this process takes 1-2 days depending on the number of rate limit errors.
 
 ```python
 from data import CCSDataIntegration
@@ -114,7 +114,7 @@ conformers = Utils().calculate_conformers("CCSMLDatabase.db", smiles_reshaped)
 
 To train the model, make sure you have ``CCSMLDatabase.db`` in the same directory as ``train.py``. This process takes 10 minutes to train fulldataset on a M4 Pro Macbook Pro.
 
-Run the following code in another file. To train the model without using METLIN data set ``use_metlin=False`` and to set a threshold for how many datapoint you want in a subclass in order to include it in the training and test sets,
+Run the following code in another file. To train the model without using METLIN data set ``use_metlin=False`` and to set a threshold for how many datapoints you want in a subclass in order to include it in the training and test sets,
 set ``subclass_frequency_threshold=N`` where N is a number > 0.
 
 ```python
@@ -122,7 +122,8 @@ from train import CCSMLModel
 
 ccs_model = CCSMLModel("CCSMLDatabase.db", 
                        "train_data.csv", 
-                       "test_data.csv", 
+                       "test_data.csv",
+                       seed=26,
                        use_metlin=True, 
                        subclass_frequency_threshold=None)
 ccs_model.fit()
