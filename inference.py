@@ -34,7 +34,7 @@ adducts = load_adducts(DB_PATH)
 df = pd.read_csv(INPUT_CSV)
 
 # Validate columns
-required = ["smi", "ionmass", "z", "instrument", "adduct"]
+required = ["smi", "ionmass", "z", "adduct"]
 missing = [c for c in required if c not in df.columns]
 if missing:
     raise ValueError(f"Missing required columns in {INPUT_CSV}: {missing}")
@@ -48,7 +48,6 @@ for i, row in df.iterrows():
         smiles=str(row["smi"]),
         ion_mass=float(row["ionmass"]),
         charge=int(row["z"]),
-        instrument=str(row["instrument"]),
         adducts=adducts,
         adduct=str(row["adduct"]),
     )

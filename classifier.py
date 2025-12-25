@@ -30,7 +30,7 @@ class SubclassClassifier:
             tree_method="hist",
             n_jobs=-1,
             eval_metric="mlogloss",
-            random_state=self.seed,
+            random_state=self.seed, 
         )
     
     def _macro_metrics(self, y_true, y_pred):
@@ -107,7 +107,7 @@ class SubclassClassifier:
         )
 
         id_entropy = self._softmax_entropy(oof_proba)
-        target_false_reject = 0.01
+        target_false_reject = 0.015
         self.entropy_threshold = float(np.quantile(id_entropy, 1.0 - target_false_reject))
         print(f"Entropy threshold (reject ~{target_false_reject*100:.1f}% ID): {self.entropy_threshold:.6f}")
 
@@ -119,6 +119,8 @@ class SubclassClassifier:
             print(f"Proxy-OOD rejected: {(proxy_entropy > self.entropy_threshold).mean()*100:.1f}%")
         
     def predict(self):
+        print ("Starting Inference")
+
         conn = sqlite3.connect(self.database_file)
         query = "SELECT id, smi FROM master_clean WHERE subclass IS NULL"
         data = pd.read_sql_query(query, conn)
@@ -142,7 +144,6 @@ class SubclassClassifier:
         pred_class = self.encoder.inverse_transform(pred_idx)
 
         proba_unl = self.model.predict_proba(X_test)
-        pmax_unl = np.max(proba_unl, axis=1)
         pred_idx = np.argmax(proba_unl, axis=1)
         pred_class = self.encoder.inverse_transform(pred_idx)
 

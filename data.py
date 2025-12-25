@@ -161,7 +161,7 @@ class CCSDataIntegration:
         "tag TEXT, name TEXT, pubchemId INTEGER, " \
         "adduct TEXT, mass REAL, z INTEGER, " \
         "ccs REAL, smi TEXT, inchikey TEXT, " \
-        "superclass TEXT, class TEXT, subclass TEXT, instrument TEXT)")
+        "superclass TEXT, class TEXT, subclass TEXT)")
         conn.commit()
 
         cur.close()
@@ -359,7 +359,7 @@ class CCSDataIntegration:
         merged_dataset = sqlite3.connect(self.db_filename)
         merged_dataset_cur = merged_dataset.cursor()
 
-        c3s = sqlite3.connect("C3S.db")
+        c3s = sqlite3.connect("./datasets/C3S.db")
         c3s_cur = c3s.cursor()
         records = c3s_cur.execute("SELECT * FROM master WHERE smi IS NOT NULL").fetchall()
         c3s_cur.close()
@@ -373,7 +373,6 @@ class CCSDataIntegration:
             ccs = record[6]
             smiles = record[7]
             src_tag = record[8]
-            instrument = record[9]
             superclass = record[11]
             class_ = record[12]
             subclass = record[13]
@@ -389,11 +388,11 @@ class CCSDataIntegration:
                 weight_diff = abs(float(mass) - (isotopic_mass+self.ADDUCT_OFFSETS[adduct]))
                 tolerance = max(1, 0.01 * isotopic_mass)
                 if src_tag != "nguyen25" and weight_diff <= tolerance:
-                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass, instrument)
-                                                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", ("CCSBASE", name, None, adduct, mass, z, ccs, desalted_smiles, None, superclass, class_, subclass, instrument))
+                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass)
+                                                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", ("CCSBASE", name, None, adduct, mass, z, ccs, desalted_smiles, None, superclass, class_, subclass))
                 else:
-                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass, instrument)
-                                                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", ("CCSBASE", name, None, adduct, mass, z, ccs, None, None, superclass, class_, subclass, instrument))
+                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass)
+                                                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", ("CCSBASE", name, None, adduct, mass, z, ccs, None, None, superclass, class_, subclass))
         merged_dataset.commit()
         merged_dataset.close()
 
@@ -401,7 +400,7 @@ class CCSDataIntegration:
         print("ADDING ALLCCS")
         merged_dataset = sqlite3.connect(self.db_filename)
         merged_dataset_cur = merged_dataset.cursor()
-        allccs = pd.read_csv("allccs.csv")
+        allccs = pd.read_csv("./datasets/allccs.csv")
 
         for _, row in allccs.iterrows():
             if pd.notna(row["m/z"]) and pd.notna(row["Adduct"]) and pd.notna(row["CCS"]) and pd.notna(row["Name"]) and row["Confidence level"] == "1":
@@ -413,9 +412,9 @@ class CCSDataIntegration:
 
                   z = self._calculate_charge(adduct)
 
-                  merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass, instrument)
-                                              VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                              ("ALLCCS", name, None, adduct, mz, z, ccs, None, None, None, None, None, "DT"))
+                  merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass)
+                                              VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                              ("ALLCCS", name, None, adduct, mz, z, ccs, None, None, None, None, None))
 
         merged_dataset.commit()
         merged_dataset.close()
@@ -425,7 +424,7 @@ class CCSDataIntegration:
         merged_dataset = sqlite3.connect(self.db_filename)
         merged_dataset_cur = merged_dataset.cursor()
 
-        pnnl = pd.read_csv("pnnl.tsv", sep="\t")
+        pnnl = pd.read_csv("./datasets/pnnl.tsv", sep="\t")
 
         for _, row in pnnl.iterrows():
             if pd.notna(row["PubChem CID"]) and pd.notna(row["InChi"]):
@@ -438,9 +437,9 @@ class CCSDataIntegration:
                     adduct = "[M+H]+"
                     z = self._calculate_charge(adduct)
                     inchikey = row["InChi"]
-                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass, instrument)
-                                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                        ("PNNL", name, cid, adduct, mass, z, ccs, None, inchikey, None, None, None, "DT"))
+                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass)
+                                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                        ("PNNL", name, cid, adduct, mass, z, ccs, None, inchikey, None, None, None))
 
                 if pd.notna(row["mPlusNaCCS"]):
                     mass = row["mPlusNa"]
@@ -448,9 +447,9 @@ class CCSDataIntegration:
                     adduct = "[M+Na]+"
                     z = self._calculate_charge(adduct)
                     inchikey = row["InChi"]
-                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass, instrument)
-                                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                        ("PNNL", name, cid, adduct, mass, z, ccs, None, inchikey, None, None, None, "DT"))
+                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass)
+                                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                        ("PNNL", name, cid, adduct, mass, z, ccs, None, inchikey, None, None, None))
 
                 if pd.notna(row["mMinusHCCS"]):
                     mass = row["mMinusH"]
@@ -458,9 +457,9 @@ class CCSDataIntegration:
                     adduct = "[M-H]-"
                     z = self._calculate_charge(adduct)
                     inchikey = row["InChi"]
-                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass, instrument)
-                                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                        ("PNNL", name, cid, adduct, mass, z, ccs, None, inchikey, None, None, None, "DT"))
+                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass)
+                                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                        ("PNNL", name, cid, adduct, mass, z, ccs, None, inchikey, None, None, None))
 
                 if pd.notna(row["mPlusDotCCS"]):
                     mass = row["mPlusDot"]
@@ -468,9 +467,9 @@ class CCSDataIntegration:
                     adduct = "[M+dot]+"
                     z = self._calculate_charge(adduct)
                     inchikey = row["InChi"]
-                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass, instrument)
-                                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                        ("PNNL", name, cid, adduct, mass, z, ccs, None, inchikey, None, None, None, "DT"))
+                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass)
+                                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                        ("PNNL", name, cid, adduct, mass, z, ccs, None, inchikey, None, None, None))
 
                 if pd.notna(row["mPlusCCS"]):
                     mass = row["mPlus"]
@@ -478,9 +477,9 @@ class CCSDataIntegration:
                     adduct = "[M]+"
                     z = self._calculate_charge(adduct)
                     inchikey = row["InChi"]
-                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass, instrument)
-                                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                        ("PNNL", name, cid, adduct, mass, z, ccs, None, inchikey, None, None, None, "DT"))
+                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass)
+                                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                        ("PNNL", name, cid, adduct, mass, z, ccs, None, inchikey, None, None, None))
 
                 if pd.notna(row["mPlusC2H3O2CCS"]):
                     mass = row["mPlusC2H3O2"]
@@ -488,9 +487,9 @@ class CCSDataIntegration:
                     adduct = "[M+CH3COO]-"
                     z = self._calculate_charge(adduct)
                     inchikey = row["InChi"]
-                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass, instrument)
-                                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                        ("PNNL", name, cid, adduct, mass, z, ccs, None, inchikey, None, None, None, "DT"))
+                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass)
+                                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                        ("PNNL", name, cid, adduct, mass, z, ccs, None, inchikey, None, None, None))
 
                 if pd.notna(row["mMinusClOCCS"]):
                     mass = row["mMinusClO"]
@@ -498,9 +497,9 @@ class CCSDataIntegration:
                     adduct = "[M-ClO]+"
                     z = self._calculate_charge(adduct)
                     inchikey = row["InChi"]
-                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass, instrument)
-                                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                        ("PNNL", name, cid, adduct, mass, z, ccs, None, inchikey, None, None, None, "DT"))
+                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass)
+                                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                        ("PNNL", name, cid, adduct, mass, z, ccs, None, inchikey, None, None, None))
 
                 if pd.notna(row["mMinusBrOCCS"]):
                     mass = row["mMinusBrO"]
@@ -508,9 +507,9 @@ class CCSDataIntegration:
                     adduct = "[M-BrO]+"
                     z = self._calculate_charge(adduct)
                     inchikey = row["InChi"]
-                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass, instrument)
-                                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                        ("PNNL", name, cid, adduct, mass, z, ccs, None, inchikey, None, None, None, "DT"))
+                    merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass)
+                                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                        ("PNNL", name, cid, adduct, mass, z, ccs, None, inchikey, None, None, None))
 
         merged_dataset.commit()
         merged_dataset.close()
@@ -519,7 +518,7 @@ class CCSDataIntegration:
         print("ADDING ACS")
         merged_dataset = sqlite3.connect(self.db_filename)
         merged_dataset_cur = merged_dataset.cursor()
-        sheets = pd.read_excel("acs.xlsx", sheet_name=["M+H", "M+Na", "M-H", "Others"])
+        sheets = pd.read_excel("./datasets/acs.xlsx", sheet_name=["M+H", "M+Na", "M-H", "Others"])
 
         for _, df in sheets.items():
             for _, row in df.iterrows():
@@ -539,9 +538,9 @@ class CCSDataIntegration:
                     if ccs and adduct and mass and name:
                         z = self._calculate_charge(adduct)
 
-                        merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemID, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass, instrument)
-                                                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                                    ("ACS", name, cid, adduct, mass, z, ccs, None, inchikey, superclass, class_, subclass, "TW"))
+                        merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemID, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass)
+                                                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                                    ("ACS", name, cid, adduct, mass, z, ccs, None, inchikey, superclass, class_, subclass))
                                                     
 
         merged_dataset.commit()
@@ -552,7 +551,7 @@ class CCSDataIntegration:
         merged_dataset = sqlite3.connect(self.db_filename)
         merged_dataset_cur = merged_dataset.cursor()
 
-        metlin = pd.read_csv("metlin.csv")
+        metlin = pd.read_csv("./datasets/metlin.csv")
 
         for _, row in metlin.iterrows():
             cid = row["pubChem"]
@@ -565,9 +564,9 @@ class CCSDataIntegration:
                 inchikey = row["InChIKEY"]
                 z = self._calculate_charge(adduct)
 
-                merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass, instrument)
-                                                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                                ("METLIN", name, cid, adduct, mass, z, ccs, None, inchikey, None, None, None, "TIMS"))
+                merged_dataset_cur.execute("""INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass)
+                                                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                                ("METLIN", name, cid, adduct, mass, z, ccs, None, inchikey, None, None, None))
 
         merged_dataset.commit()
         merged_dataset.close()
@@ -665,7 +664,7 @@ class CCSDataIntegration:
             return
 
         # 2. Filter Groups based on CCS relative deviation ≤ 1%
-        ccs_ratio = df.groupby(['smi', 'adduct', 'instrument'])['ccs'] \
+        ccs_ratio = df.groupby(['smi', 'adduct',])['ccs'] \
                     .transform(lambda x: x.max() / x.min())
         
         # Keep only rows where values are within 1% of each other
@@ -707,7 +706,7 @@ class CCSDataIntegration:
         }
 
         # 4. Perform the Merge
-        df_clean = df_valid.groupby(['smi', 'adduct', 'instrument'], as_index=False).agg(agg_rules)
+        df_clean = df_valid.groupby(['smi', 'adduct'], as_index=False).agg(agg_rules)
 
         # 5. Write to master_clean table
         cur = conn.cursor()
@@ -719,9 +718,9 @@ class CCSDataIntegration:
             "tag TEXT, name TEXT, pubchemId TEXT, " \
             "adduct TEXT, mass REAL, z INTEGER, " \
             "ccs REAL, smi TEXT, inchikey TEXT, " \
-            "superclass TEXT, class TEXT, subclass TEXT, instrument TEXT)")
+            "superclass TEXT, class TEXT, subclass TEXT)")
         
-        cols_order = ['id', 'tag', 'name', 'pubchemId', 'adduct', 'mass', 'z', 'ccs', 'smi', 'inchikey', 'superclass', 'class', 'subclass', 'instrument']
+        cols_order = ['id', 'tag', 'name', 'pubchemId', 'adduct', 'mass', 'z', 'ccs', 'smi', 'inchikey', 'superclass', 'class', 'subclass']
         df_clean = df_clean[cols_order]
 
         df_clean.to_sql('master_clean', conn, if_exists='append', index=False)

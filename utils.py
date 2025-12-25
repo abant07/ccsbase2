@@ -20,7 +20,7 @@ class Utils:
         subclass_frequency_threshold=None
     ):
         conn = sqlite3.connect(database_file)
-        query = "SELECT smi, mass, z, ccs, name, subclass, adduct, tag, instrument FROM master_clean WHERE ABS(z) = 1 AND subclass != 'NONE (predicted)'"
+        query = "SELECT smi, mass, z, ccs, name, subclass, adduct, tag FROM master_clean WHERE ABS(z) = 1 AND subclass != 'NONE (predicted)'"
         if not use_metlin:
             query += " AND tag != 'METLIN'"
 
@@ -94,26 +94,18 @@ class Utils:
         print(len(train_df), "train rows")
         print(len(test_df), "test rows")
 
-    def calculate_descriptors(self, smiles: str, ion_mass: float, charge: int, instrument: str, adducts: list, adduct: str):
+    def calculate_descriptors(self, smiles: str, ion_mass: float, charge: int, adducts: list, adduct: str):
         mol = Chem.MolFromSmiles(smiles)
         mol = Chem.AddHs(mol)
 
         feature_values = []
 
-        mw = rdMolDescriptors.CalcExactMolWt(mol)
-        feature_values.append(mw)                          # MolecularWeight
-        feature_values.append(ion_mass - mw)               # AdductMass
-        feature_values.append(charge)                      # Charge
-
-        if instrument == "DT":
-            feature_values.extend([1, 0, 0])
-        elif instrument == "TIMS":
-            feature_values.extend([0, 1, 0])
-        else: # TWIM
-            feature_values.extend([0, 0, 1])
-        
+        molecular_weight = rdMolDescriptors.CalcExactMolWt(mol)
+        feature_values.append(molecular_weight)
+        feature_values.append(ion_mass - molecular_weight)   # AdductMass
+        feature_values.append(charge)
         feature_values.append(rdMolDescriptors.CalcLabuteASA(mol))
-
+        
         ohe_adduct = [0] * len(adducts)
         ohe_index = adducts.index(adduct)
         ohe_adduct[ohe_index] = 1
@@ -132,7 +124,7 @@ class Utils:
         return np.array(feature_values)
     
     # NOT USED
-    def calculate_3d_descriptors(self, smiles: str, ion_mass: float, charge: int, instrument: str, database_file: str):
+    def calculate_3d_descriptors(self, smiles: str, ion_mass: float, charge: int, database_file: str):
         conn = sqlite3.connect(database_file)
         cur = conn.cursor()
 
@@ -154,12 +146,6 @@ class Utils:
         feature_values.append(mw)                          # MolecularWeight
         feature_values.append(ion_mass - mw)               # AdductMass
         feature_values.append(charge)                      # Charge
-        if instrument == "DT":
-            feature_values.extend([1, 0, 0])
-        elif instrument == "TIMS":
-            feature_values.extend([0, 1, 0])
-        else: # TWIM
-            feature_values.extend([0, 0, 1])
 
         dclv = rdMolDescriptors.DoubleCubicLatticeVolume(mol)
         feature_values.append(dclv.GetVDWVolume())
@@ -256,21 +242,4 @@ class Utils:
         arr = np.zeros((count_fp.GetLength(),), dtype=int)
         DataStructs.ConvertToNumpyArray(count_fp, arr)
 
-        additional_descriptors = np.array(
-            [
-                Descriptors.MolWt(mol),
-                Crippen.MolLogP(mol),
-                rdMolDescriptors.CalcTPSA(mol),
-                rdMolDescriptors.CalcNumHBD(mol),
-                rdMolDescriptors.CalcNumHBA(mol),
-                rdMolDescriptors.CalcNumRotatableBonds(mol),
-                rdMolDescriptors.CalcNumRings(mol),
-                rdMolDescriptors.CalcNumAromaticRings(mol),
-                rdMolDescriptors.CalcFractionCSP3(mol),
-                mol.GetNumHeavyAtoms(),
-                Chem.GetFormalCharge(mol),
-            ],
-            dtype=np.float32,
-        )
-
-        return np.concatenate([arr.astype(np.float32), additional_descriptors])
+        return arr.astype(np.float32)

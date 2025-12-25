@@ -10,7 +10,7 @@ from sklearn.metrics import mean_absolute_error, median_absolute_error, root_mea
 from utils import Utils
 from metrics import Metrics
 
-class CCSMLModel:
+class CCSBase2:
     
     def __init__(self, database_file, train_filename, test_filename, seed=None, use_metlin=True, subclass_frequency_threshold=None):
         self.database_file = database_file
@@ -43,8 +43,7 @@ class CCSMLModel:
         X_list, y_list = [], []
         for _, row in pd.read_csv(self.train_file).iterrows():
             feat_values = self.utils.calculate_descriptors(
-                row["smi"], row["mass"], row["z"], row["instrument"],
-                self.adducts, row["adduct"]
+                row["smi"], row["mass"], row["z"], self.adducts, row["adduct"]
             )
             if feat_values is not None:
                 X_list.append(feat_values)
@@ -146,11 +145,11 @@ class CCSMLModel:
         y_list = []
         metadata = []
         for _, row in pd.read_csv(self.test_file).iterrows():
-            feat_values = self.utils.calculate_descriptors(row['smi'], row['mass'], row['z'], row['instrument'], self.adducts, row['adduct'])
+            feat_values = self.utils.calculate_descriptors(row['smi'], row['mass'], row['z'], self.adducts, row['adduct'])
             if feat_values is not None:
                 X_list.append(feat_values)
                 y_list.append(row['ccs'])
-                metadata.append([row["tag"], row["subclass"], row["adduct"], row["name"], row["smi"], row["z"], row['instrument']])
+                metadata.append([row["tag"], row["subclass"], row["adduct"], row["name"], row["smi"], row["z"]])
 
         X_test = np.asarray(X_list)
         y_test = np.asarray(y_list)
@@ -180,7 +179,6 @@ class CCSMLModel:
             "Name": [m[3] for m in metadata],
             "SMILES": [m[4] for m in metadata],
             "Charge": [m[5] for m in metadata],
-            "Instrument": [m[6] for m in metadata],
             "CCS_True": y_test,
             "CCS_Pred": y_pred_test
         })

@@ -118,14 +118,14 @@ Run the following code in another file. To train the model without using METLIN 
 set ``subclass_frequency_threshold=N`` where N is a number > 0.
 
 ```python
-from train import CCSMLModel
+from train import CCSBase2
 
-ccs_model = CCSMLModel("CCSMLDatabase.db", 
+ccs_model = CCSBase2("CCSMLDatabase.db", 
                        "train_data.csv", 
                        "test_data.csv",
                        seed=26,
                        use_metlin=True, 
-                       subclass_frequency_threshold=None)
+                       subclass_frequency_threshold=40)
 ccs_model.fit()
 ccs_model.predict()
 ```
