@@ -22,13 +22,13 @@ pip install numpy pandas scikit-learn rdkit xgboost joblib requests matplotlib
 CCSbase2.0 aggregates across the 5 different datasets listed below. AllCCS was obtained by downloading chemicals manually using their online database.
 
 
-#### CCSBase: https://ccsbase.net/
+#### [CCSBase](https://ccsbase.net/)
 
-#### PNNL: https://pnnl-comp-mass-spec.github.io/MetabolomicsCCS/
+#### [PNNL](https://pnnl-comp-mass-spec.github.io/MetabolomicsCCS/)
 
-#### ALLCCS: http://allccs.zhulab.cn/database/browser
+#### [ALLCCS](http://allccs.zhulab.cn/database/browser)
 
-#### METLIN: https://www.dropbox.com/scl/fi/9xctm5ub834muw1qrvd5b/CCS-Publication-V3.zip?e=2&file_subpath=%2FCCS-Publication-V3&rlkey=zi9xaua4zzgpiiaznexabpg7i&dl=0
+#### [METLIN](https://www.dropbox.com/scl/fi/9xctm5ub834muw1qrvd5b/CCS-Publication-V3.zip?e=2&file_subpath=%2FCCS-Publication-V3&rlkey=zi9xaua4zzgpiiaznexabpg7i&dl=0)
 
 #### ACS Publication: https://pubs.acs.org/doi/10.1021/acs.jafc.2c00724
 
