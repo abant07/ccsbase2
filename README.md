@@ -30,7 +30,7 @@ CCSbase2.0 aggregates across the 5 different datasets listed below. AllCCS was o
 
 #### [METLIN](https://www.dropbox.com/scl/fi/9xctm5ub834muw1qrvd5b/CCS-Publication-V3.zip?e=2&file_subpath=%2FCCS-Publication-V3&rlkey=zi9xaua4zzgpiiaznexabpg7i&dl=0)
 
-#### ACS Publication: https://pubs.acs.org/doi/10.1021/acs.jafc.2c00724
+#### [ACS Publication](https://pubs.acs.org/doi/10.1021/acs.jafc.2c00724)
 
 
 The full dataset used for our models, including prebuilt 3D conformers, is available for download. In addition, model weights are provided for models trained under different dataset configurations.
