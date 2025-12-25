@@ -36,15 +36,14 @@ CCSbase2.0 aggregates across the 5 different datasets listed below. AllCCS was o
 The full dataset used for our models, including prebuilt 3D conformers, is available for download. In addition, model weights are provided for models trained under different dataset configurations.
 
 ### Prebuilt Database
-- [CCSMLDatabase](https://drive.google.com/file/d/1NQy1ZcuRwRlZv2scIgqvrvsFDLFhEewx/view?usp=drive_link)
+- [CCSMLDatabase](https://drive.google.com/file/d/1NQy1ZcuRwRlZv2scIgqvrvsFDLFhEewx/view?usp=sharing)
 
 
 ### Model Weights
-- [Trained with Full Dataset](https://drive.google.com/file/d/1gIwU1uCSAY__sjbu3eCLDnJ8KqZ6B06E/view?usp=sharing)
+- [Trained with Full Dataset](https://drive.google.com/file/d/1-6Vx7x9Kbpw8xyBqhcCTJLfOVqU3ZtAB/view?usp=sharing)
 
-- [Trained without METLIN](https://drive.google.com/file/d/1OTsnFYngu1EtKoHOkks6lS_HHEgYnh1B/view?usp=sharing)
+- [Trained without METLIN](https://drive.google.com/file/d/1jDWliUpKSZ7vLHpmYBJj9R9C5NlH8IDK/view?usp=sharing)
 
-- [Trained without METLIN and with `subclass_frequency_threshold ≥ 40`](https://drive.google.com/file/d/1Ohktmduvr6eid-pBRUIUg7D5Fs-NsRra/view?usp=sharing)
 
 
 
