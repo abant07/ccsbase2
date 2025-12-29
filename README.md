@@ -39,12 +39,7 @@ The full dataset used for our models, including prebuilt 3D conformers, is avail
 - [CCSMLDatabase](https://drive.google.com/file/d/1NQy1ZcuRwRlZv2scIgqvrvsFDLFhEewx/view?usp=sharing)
 
 
-### Model Weights
-- [Trained with Full Dataset](https://drive.google.com/file/d/1-6Vx7x9Kbpw8xyBqhcCTJLfOVqU3ZtAB/view?usp=sharing)
-
-- [Trained without METLIN](https://drive.google.com/file/d/1jDWliUpKSZ7vLHpmYBJj9R9C5NlH8IDK/view?usp=sharing)
-
-
+#### [Download Model Weights Here](https://drive.google.com/file/d/1-6Vx7x9Kbpw8xyBqhcCTJLfOVqU3ZtAB/view?usp=sharing)
 
 
 Alternatively, you can build the database from scratch. Run the code below in a separate file. Please note that this entire process takes a very long time as thousands of API calls are being made.
@@ -73,7 +68,7 @@ ccsml.clean()
 
 ### Classify Unknown Subclasses
 
-After building the database, you'll find datapoints that have a valid SMILES and InChiKey, however ClassyFire could not identify a valid SMILES string. In these cases, we have built a XGBoostClassifier that can classify the subclasses of these compounds, which increases the amount of data the model sees. All subclasses in our dataset that have less than 30 points are not included during training and act as a proxy out of distribution (OOD) dataset. This process takes around 45 minutes to train on a M4 Pro Macbook Pro.
+After building the database, you'll find datapoints that have a valid SMILES and InChiKey, however ClassyFire could not identify a valid SMILES string. In these cases, we have built a XGBoostClassifier that can classify the subclasses of these compounds, which increases the amount of data the model sees. All subclasses in our dataset that have less than 30 points are not included during training and act as a proxy out of distribution (OOD) dataset. This process takes around 40 minutes to train on a M4 Pro Macbook Pro.
 
 ```python
 from classifier import SubclassClassifier
@@ -113,8 +108,8 @@ conformers = Utils().calculate_conformers("CCSMLDatabase.db", smiles_reshaped)
 
 To train the model, make sure you have ``CCSMLDatabase.db`` in the same directory as ``train.py``. This process takes 10 minutes to train fulldataset on a M4 Pro Macbook Pro.
 
-Run the following code in another file. To train the model without using METLIN data set ``use_metlin=False`` and to set a threshold for how many datapoints you want in a subclass in order to include it in the training and test sets,
-set ``subclass_frequency_threshold=N`` where N is a number > 0.
+Run the following code in another file. To train the model without using METLIN dataset ``use_metlin=False`` and to set a threshold for how many datapoints you want in a subclass in order to include it in the training and test sets,
+set ``subclass_frequency_threshold=N`` where N is a number > 0. You can optionally set ``subclass_frequency_threshold=None``
 
 ```python
 from train import CCSBase2

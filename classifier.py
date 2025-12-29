@@ -107,7 +107,7 @@ class SubclassClassifier:
         )
 
         id_entropy = self._softmax_entropy(oof_proba)
-        target_false_reject = 0.015
+        target_false_reject = 0.02
         self.entropy_threshold = float(np.quantile(id_entropy, 1.0 - target_false_reject))
         print(f"Entropy threshold (reject ~{target_false_reject*100:.1f}% ID): {self.entropy_threshold:.6f}")
 
