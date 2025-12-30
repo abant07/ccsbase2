@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # load data
-df = pd.read_csv("../ccs_predictions_test.csv")  # update path if needed
+df = pd.read_csv("../ccs_predictions_test.csv")
 
 # categorical colors by tag
 tags = df["Tag"].astype("category")
