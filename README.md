@@ -118,7 +118,7 @@ ccs_model.predict()
 
 ## Inference
 
-To perform inference, create a .csv file with column names ``smi,ionmass,z,adduct`` and ensure saved model is same directory.
+To perform inference, create a .csv file with column names ``smi,adduct`` and ensure saved model is same directory.
 Then run the command in your CLI with your csv filename.
 
 ```bash

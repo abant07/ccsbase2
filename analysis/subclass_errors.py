@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import textwrap
 
 # load data
-df = pd.read_csv("../pretrained/ccs_predictions_test.csv")
+df = pd.read_csv("../pretrained/testset_predictions.csv")
 
 # errors
 df["_abs_err"] = (df["CCS_Pred"] - df["CCS_True"]).abs()

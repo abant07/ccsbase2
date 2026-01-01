@@ -6,7 +6,7 @@ from sklearn.model_selection import train_test_split as sk_train_test_split
 from rdkit import Chem
 
 from rdkit import Chem, DataStructs
-from rdkit.Chem import rdMolDescriptors, rdFingerprintGenerator, Crippen, Descriptors, AllChem
+from rdkit.Chem import rdMolDescriptors, rdFingerprintGenerator, AllChem
 
 class Utils:
     # ============= CCS Prediction ==============
@@ -117,7 +117,6 @@ class Utils:
         DataStructs.ConvertToNumpyArray(count_fp, arr)
         feature_values.extend(arr.tolist())
 
-        print(len(feature_values))
         return np.array(feature_values)
     
     # NOT USED

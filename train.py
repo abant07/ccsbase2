@@ -182,6 +182,6 @@ class CCSBase2:
             "CCS_True": y_test,
             "CCS_Pred": y_pred_test
         })
-        df_out.to_csv("ccs_predictions_test.csv", index=False)
+        df_out.to_csv("testset_predictions.csv", index=False)
 
-        self.metrics.generate_metrics_table("ccs_predictions_test.csv", self.cv_metrics)
+        self.metrics.generate_metrics_table("testset_predictions.csv", self.cv_metrics)

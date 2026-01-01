@@ -7,10 +7,21 @@ import pandas as pd
 from utils import Utils
 
 # ---- CONFIG ----
-DB_PATH = "CCSMLDatabase.db"     # used to fetch adduct list for one-hot encoding
+DB_PATH = "CCSMLDatabase.db"
 MODEL_PATH = "ccsbase2.joblib"
-DEFAULT_OUTPUT_CSV = "ccs_predictions.csv"
 # ----------------
+
+adduct_to_mass_charge = {
+    "[M+H]+": (1.007825,1),
+    "[M+Na]+": (22.989770,1),
+    "[M-H]-": (-1.007825,-1),
+    "[M+NH4]+": (18.034374,1),
+    "[M+H-H2O]+": (-17.00274,1),
+    "[M+K]+": (38.963707,1),
+    "[M]+": (0.0,1),
+    "[M+CH3COO]-": (59.013305,-1),
+    "[M+HCOO]-": (44.997655,-1),
+}
 
 
 def load_adducts(database_file: str) -> list[str]:
@@ -23,7 +34,7 @@ def load_adducts(database_file: str) -> list[str]:
         conn.close()
 
 
-def main(input_csv: str, output_csv: str):
+def main(input_csv: str):
     # Load model + utils
     model = joblib.load(MODEL_PATH)
     utils = Utils()
@@ -33,9 +44,10 @@ def main(input_csv: str, output_csv: str):
 
     # Read inputs
     df = pd.read_csv(input_csv)
+    output_csv = input_csv[:-4] + "_predictions.csv"
 
     # Validate columns
-    required = ["smi", "ionmass", "z", "adduct"]
+    required = ["smi", "adduct"]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"Missing required columns in {input_csv}: {missing}")
@@ -45,10 +57,13 @@ def main(input_csv: str, output_csv: str):
     valid_idx = []
 
     for i, row in df.iterrows():
+        if row["adduct"] not in adduct_to_mass_charge:
+            continue
+
         feats = utils.calculate_descriptors(
             smiles=str(row["smi"]),
-            ion_mass=float(row["ionmass"]),
-            charge=int(row["z"]),
+            ion_mass=adduct_to_mass_charge[row["adduct"]][0],
+            charge=adduct_to_mass_charge[row["adduct"]][1],
             adducts=adducts,
             adduct=str(row["adduct"]),
         )
@@ -69,15 +84,15 @@ def main(input_csv: str, output_csv: str):
 
     # Write output (preserve all rows; failed rows get NaN)
     out = df.copy()
-    out["CCS_Pred"] = np.nan
-    out.loc[valid_idx, "CCS_Pred"] = preds
+    out["Predicted CCS"] = np.nan
+    out.loc[valid_idx, "Predicted CCS"] = preds
 
     out.to_csv(output_csv, index=False)
 
     print(f"Wrote: {output_csv}")
     print(f"Predicted rows: {len(valid_idx)} / {len(df)}")
     if len(valid_idx) != len(df):
-        print("Some rows were skipped due to featurization errors (CCS_Pred = NaN).")
+        print("Some rows were skipped due to featurization errors (Predicted CCS = NaN).")
 
 
 if __name__ == "__main__":
@@ -88,12 +103,6 @@ if __name__ == "__main__":
         "input_csv",
         help="Input CSV file (must include: smi, ionmass, z, adduct)",
     )
-    parser.add_argument(
-        "-o",
-        "--output",
-        default=DEFAULT_OUTPUT_CSV,
-        help=f"Output CSV file (default: {DEFAULT_OUTPUT_CSV})",
-    )
 
     args = parser.parse_args()
-    main(args.input_csv, args.output)
+    main(args.input_csv)
