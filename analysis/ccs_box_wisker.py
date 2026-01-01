@@ -8,7 +8,7 @@ TABLE = "master_clean"
 # load
 conn = sqlite3.connect(DB_PATH)
 df = pd.read_sql_query(
-    f"SELECT tag, ccs FROM {TABLE} WHERE ccs IS NOT NULL",
+    f"SELECT tag, ccs FROM {TABLE}",
     conn,
 )
 conn.close()
@@ -18,7 +18,20 @@ df["tag"] = df["tag"].str.split(",")
 df = df.explode("tag")
 df["tag"] = df["tag"].str.strip()
 
-# prepare data + counts
+# print statistics per dataset/tag
+print("CCS statistics by dataset:")
+for tag, g in df.groupby("tag"):
+    print(
+        f"{tag}: "
+        f"n={len(g)}, "
+        f"mean={g['ccs'].mean():.2f}, "
+        f"median={g['ccs'].median():.2f}, "
+        f"std={g['ccs'].std():.2f}"
+    )
+
+print()
+
+# prepare data + counts for plotting
 tags = sorted(df["tag"].unique().tolist())
 data = []
 labels = []
@@ -33,8 +46,7 @@ plt.figure(figsize=(max(8, 0.45 * len(tags)), 6))
 plt.boxplot(data, labels=labels, showfliers=False)
 
 plt.ylabel("CCS")
-plt.xlabel("Tag")
-plt.title("CCS distribution by Tag")
+plt.xlabel("Dataset")
 
 plt.xticks(rotation=45, ha="right", fontsize=8)
 plt.tight_layout()

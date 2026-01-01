@@ -47,20 +47,16 @@ class Utils:
             y = group_df["ccs"].values
             stratify_labels = None
 
-            if len(y) >= 5:
-                try:
-                    y_arr = y.astype(float)
-                    stratify_labels = (y_arr // 10).astype(int)
-                    vc = pd.Series(stratify_labels).value_counts()
-                    if vc.min() < 2:
-                        stratify_labels = None
-                    else:
-                        n_samples = len(y_arr)
-                        n_test = int(np.ceil(test_size * n_samples))
-                        n_classes = vc.size
-                        if n_test < n_classes:
-                            stratify_labels = None
-                except Exception:
+            y_arr = y.astype(float)
+            stratify_labels = (y_arr // 10).astype(int)
+            vc = pd.Series(stratify_labels).value_counts()
+            if vc.min() < 2:
+                stratify_labels = None
+            else:
+                n_samples = len(y_arr)
+                n_test = int(np.ceil(test_size * n_samples))
+                n_classes = vc.size
+                if n_test < n_classes:
                     stratify_labels = None
 
             group_train, group_test = sk_train_test_split(
@@ -121,6 +117,7 @@ class Utils:
         DataStructs.ConvertToNumpyArray(count_fp, arr)
         feature_values.extend(arr.tolist())
 
+        print(len(feature_values))
         return np.array(feature_values)
     
     # NOT USED
