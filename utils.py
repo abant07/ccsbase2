@@ -102,8 +102,10 @@ class Utils:
         feature_values.append(charge)
         feature_values.append(rdMolDescriptors.CalcLabuteASA(mol))
         
-        ohe_adduct = [0] * len(adducts)
-        ohe_index = adducts.index(adduct)
+        ohe_adduct = [0] * (len(adducts) + 1)
+        ohe_index = len(adducts)
+        if adduct in adducts:
+            ohe_index = adducts.index(adduct)
         ohe_adduct[ohe_index] = 1
 
         feature_values.extend(ohe_adduct)

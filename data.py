@@ -108,7 +108,6 @@ class CCSDataIntegration:
             '[M+K-H+HCOO]-': ATOMIC_MASSES['K'] - ATOMIC_MASSES['H'] + HCOO,
             '[M+Na-H+HCOO]-': ATOMIC_MASSES['Na'] - ATOMIC_MASSES['H'] + HCOO,
             '[M-H2O+HCOO]-': -H2O + HCOO,
-            '[M+CH3COONa-H]-': CH3COO + ATOMIC_MASSES['Na'] - ATOMIC_MASSES['H'],
             '[M-H+HCOOH]-': -ATOMIC_MASSES['H'] + (HCOO + ATOMIC_MASSES['H']),
 
             # SO3 / Sulfonate Adducts (Negative)

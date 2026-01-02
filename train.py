@@ -25,7 +25,7 @@ class CCSBase2:
         self.seed = 26 if seed is None else seed
 
         conn = sqlite3.connect(database_file)
-        query = "SELECT DISTINCT adduct FROM master_clean"
+        query = "SELECT adduct FROM master_clean GROUP BY adduct HAVING COUNT(*) >= 100 ORDER BY adduct"
         adducts = sorted(pd.read_sql_query(query, conn).to_numpy().tolist())
         self.adducts = [adduct[0] for adduct in adducts]
 
