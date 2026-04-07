@@ -27,8 +27,8 @@ This folder contains exploratory data analysis notebooks for the **raw/uncleaned
 |--------|------|-------------|
 | m/z Histogram | Histogram | Distribution of mass-to-charge ratios across the dataset. Includes vertical lines for mean (red dashed) and median (orange solid) with legend values. |
 | CCS Histogram | Histogram | Distribution of collision cross-section values. Includes mean and median markers with legend values. |
-| m/z vs CCS (Superclass) | Scatter plot | All datapoints plotted with m/z on X-axis, CCS on Y-axis. Points colored by chemical superclass (tab20 colormap). Legend shows superclass categories. |
-| m/z vs CCS (Chem Labs) | Scatter plot | Same scatter but points colored by data source/laboratory origin. Shows which labs contributed data across different m/z and CCS ranges. |
+| Mass-CCS Distribution by (Subclass) | Scatter plot | All datapoints plotted with m/z on X-axis, CCS on Y-axis. Points colored by chemical superclass (tab20 colormap). Legend shows superclass categories. |
+| Mass-CCS Distribution by Tag | Scatter plot | Same scatter but points colored by data source/laboratory origin. Shows which labs contributed data across different m/z and CCS ranges. |
 
 ---
 
@@ -38,8 +38,7 @@ This folder contains exploratory data analysis notebooks for the **raw/uncleaned
 **Figures:**
 | Figure | Type | Description |
 |--------|------|-------------|
-| CCS Box/Whisker by Lab | Box plot | Box and whisker plots comparing CCS distributions across different data sources. No outliers shown. X-axis: dataset/lab names, Y-axis: CCS values. Useful for identifying systematic differences between labs. |
-| Summary Statistics Table | Table figure | Formatted table showing per-source statistics: N (count), m/z Mean, m/z Std, CCS Mean, CCS Median, CCS Std, CCS Min, CCS Max. Header styled with blue background. |
+| CCS Distribution by Source | Box plot | Box and whisker plots comparing CCS distributions across different data sources. No outliers shown. X-axis: dataset/lab names, Y-axis: CCS values. Useful for identifying systematic differences between labs. |
 
 ---
 
@@ -49,9 +48,7 @@ This folder contains exploratory data analysis notebooks for the **raw/uncleaned
 **Figures:**
 | Figure | Type | Description |
 |--------|------|-------------|
-| Charge State Counts | Bar chart | Counts of positive vs negative charge state entries. X-axis: "Positive Charge" and "Negative Charge", Y-axis: frequency. Shows raw counts. |
 | CCS Distribution by Polarity | KDE overlay plot | Kernel density estimation showing CCS distribution for positive ions (blue) overlaid with negative ions (red). Includes sample sizes in legend. Shows whether polarity affects CCS range. |
-| m/z vs CCS by Polarity | Scatter plot | All datapoints with positive ions in blue, negative ions in red. Shows relationship between m/z and CCS separated by ion mode. Legend includes sample counts. |
 
 ---
 
@@ -61,8 +58,8 @@ This folder contains exploratory data analysis notebooks for the **raw/uncleaned
 **Figures:**
 | Figure | Type | Description |
 |--------|------|-------------|
-| CCS Violin by Adduct (Top 10) | Violin plot | CCS distributions for the 10 most common adducts. Ordered by median CCS. X-axis labels include adduct name and count (n). Shows distribution shape, useful for identifying adduct-specific CCS ranges. |
-| m/z vs CCS by Adduct | Scatter plot | m/z vs CCS with top 6 adducts colored distinctly (tab10 colormap), remaining adducts in gray background. Legend shows adduct names and counts. |
+| CCS Distribution by Adduct Type | Violin plot | CCS distributions for the 10 most common adducts. Ordered by median CCS. X-axis labels include adduct name and count (n). Shows distribution shape, useful for identifying adduct-specific CCS ranges. |
+| Mass-CCS Distribution by Adduct Type | Scatter plot | m/z vs CCS with top 6 adducts colored distinctly (tab10 colormap), remaining adducts in gray background. Legend shows adduct names and counts. |
 
 ---
 
@@ -98,24 +95,3 @@ This folder contains exploratory data analysis notebooks for the **raw/uncleaned
 
 ---
 
-## Color Palette Used
-- **Primary (blue):** `#2c7bb6`
-- **Secondary (red):** `#d7191c`
-- **Tertiary (orange):** `#fdae61`
-- **Quaternary (light blue):** `#abd9e9`
-- **Positive ions:** `#2ca02c` (green)
-- **Negative ions:** `#d62728` (red)
-
----
-
-## Suggested Journal Placement
-
-| Section | Recommended Figures |
-|---------|---------------------|
-| **Methods - Dataset Description** | Dataset Summary Table, m/z and CCS Distributions |
-| **Methods - Data Sources** | Database Entry Breakdown By Lab, CCS Box Plots by Source, Summary Statistics Table |
-| **Methods - Train/Test Split** | Train/Test Split Validation (4-panel) |
-| **Results - Chemical Space Coverage** | UMAP Projection, 3D Density Surface, Tanimoto Similarity Distribution |
-| **Results - Adduct Analysis** | CCS Violin by Adduct, m/z vs CCS by Adduct |
-| **Results - Polarity Analysis** | Charge State Analysis, CCS by Polarity, m/z vs CCS by Polarity |
-| **Supplementary** | Missing Data Heatmap, Data Completeness, full composition breakdowns |
