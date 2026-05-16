@@ -2,6 +2,10 @@
 
 A Collision Cross Section prediction model using a XGBoostRegressor model.
 
+## Documentation
+
+- **Fingerprint explorer** — hosted on Streamlit: [https://ccsbase2-fingerprint-explorer.streamlit.app/](https://ccsbase2-fingerprint-explorer.streamlit.app/)
+
 ## Dependencies
 
 ### 1. Create a Conda environment (Python 3.10)
