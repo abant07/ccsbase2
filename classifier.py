@@ -1,6 +1,7 @@
 import sqlite3
 import numpy as np
 import pandas as pd
+import joblib
 
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import LabelEncoder
@@ -45,7 +46,7 @@ class SubclassClassifier:
     
     def fit(self):
         conn = sqlite3.connect(self.database_file)
-        query = "SELECT smi, subclass FROM master_clean WHERE subclass IS NOT NULL"
+        query = "SELECT smi, subclass FROM master_clean WHERE subclass NOT LIKE '%(predicted)' AND subclass IS NOT NULL"
         data = pd.read_sql_query(query, conn)
         conn.close()
 
@@ -113,6 +114,7 @@ class SubclassClassifier:
 
         self.model = self._build_model()
         self.model.fit(X_train, y_train)
+        joblib.dump(self.model, "ccsbase2_classifier.joblib")
 
         if X_proxy_ood is not None and len(X_proxy_ood) > 0:
             proxy_entropy = self._softmax_entropy(self.model.predict_proba(X_proxy_ood))
@@ -122,7 +124,7 @@ class SubclassClassifier:
         print ("Starting Inference")
 
         conn = sqlite3.connect(self.database_file)
-        query = "SELECT id, smi FROM master_clean WHERE subclass IS NULL"
+        query = "SELECT id, smi FROM master_clean WHERE subclass LIKE '%(predicted)' OR subclass IS NULL"
         data = pd.read_sql_query(query, conn)
 
         if len(data) == 0:

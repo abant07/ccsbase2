@@ -39,6 +39,8 @@ CCSbase2 aggregates across the 5 different datasets listed below. AllCCS was obt
 
 #### [Download Model Weights](https://drive.google.com/file/d/1sXutsjETBxTs-SutORb6LLbc_sK6KgdY/view?usp=drive_link)
 
+#### [Download Classifier Model Weights](https://drive.google.com/file/d/1oQHclF7l7GwgjkwnhuK10jfUwT59uXpj/view?usp=drive_link)
+
 
 Please note that building the database from scratch takes a very long time as thousands of API calls need to be made. Instructions have been given below.
 

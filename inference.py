@@ -171,6 +171,7 @@ def main(input_csv: str):
 
     for i, row in df.iterrows():
         if row["adduct"] not in adduct_to_mass_charge:
+            print("Skipping", row['smi'], row["adduct"], "Adduct not supported")
             continue
 
         adduct_mass = adduct_to_mass_charge[row["adduct"]][0]
