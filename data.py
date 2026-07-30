@@ -13,14 +13,15 @@ from utils import calculate_charge, desalt_and_mass
 INSERT_MASTER_SQL = """INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass)
                         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 
-ALL_DATA_COUNT = 0
-AFTER_REMOVING_DIMERS_COUNT = 0
-AFTER_DESALTING_MASS_VALIDATION_COUNT = 0
-AFTER_DATA_DEDUPLICATION_COUNT = 0
 class CCSDataIntegration:
     def __init__(self, db_filename: str):
         self.db_filename = db_filename
         self.db = Database(db_filename)
+
+        self.all_data_count = 0
+        self.after_removing_dimers_count = 0
+        self.after_desalting_mass_validation_count = 0
+        self.after_data_deduplication_count = 0
 
         self.db.write(
             "CREATE TABLE IF NOT EXISTS master("
@@ -38,8 +39,7 @@ class CCSDataIntegration:
 
         rows = []
         for record in records:
-            ALL_DATA_COUNT += 1
-            AFTER_REMOVING_DIMERS_COUNT += 1
+            self.all_data_count += 1
             name = record[1]
             adduct = ADDUCT_STANDARDIZATION.get(record[2], record[2])
             mass = record[3]
@@ -52,6 +52,7 @@ class CCSDataIntegration:
 
             if "[2M" in adduct:
                 continue
+            self.after_removing_dimers_count += 1
 
             z = calculate_charge(adduct)
             desalted_smiles, isotopic_mass = desalt_and_mass(smiles)
@@ -73,8 +74,7 @@ class CCSDataIntegration:
 
         rows = []
         for _, row in allccs.iterrows():
-            ALL_DATA_COUNT += 1
-            AFTER_REMOVING_DIMERS_COUNT += 1
+            self.all_data_count += 1
             has_required_fields = (
                 pd.notna(row["m/z"]) and pd.notna(row["Adduct"])
                 and pd.notna(row["CCS"]) and pd.notna(row["Name"])
@@ -86,6 +86,7 @@ class CCSDataIntegration:
             adduct = ADDUCT_STANDARDIZATION.get(row["Adduct"], row["Adduct"])
             if "[2M" in adduct:
                 continue
+            self.after_removing_dimers_count += 1
 
             z = calculate_charge(adduct)
             rows.append(("ALLCCS", row["Name"], None, adduct, row["m/z"], z, row["CCS"], None, None, None, None, None))
@@ -109,8 +110,8 @@ class CCSDataIntegration:
 
         rows = []
         for _, row in pnnl.iterrows():
-            ALL_DATA_COUNT += 1
-            AFTER_REMOVING_DIMERS_COUNT += 1
+            self.all_data_count += 1
+            self.after_removing_dimers_count += 1
             if not (pd.notna(row["PubChem CID"]) and pd.notna(row["InChi"])):
                 continue
 
@@ -132,8 +133,8 @@ class CCSDataIntegration:
         rows = []
         for _, df in sheets.items():
             for _, row in df.iterrows():
-                ALL_DATA_COUNT += 1
-                AFTER_REMOVING_DIMERS_COUNT += 1
+                self.all_data_count += 1
+                self.after_removing_dimers_count += 1
                 cid = row["PubChem CID"]
                 mass = None if pd.isna(row["m/z"]) else row["m/z"]
                 adduct = None if pd.isna(row["adduct"]) else row["adduct"]
@@ -163,7 +164,7 @@ class CCSDataIntegration:
 
         rows = []
         for _, row in metlin.iterrows():
-            ALL_DATA_COUNT += 1
+            self.all_data_count += 1
             cid = row["pubChem"]
             mass = row["m/z"]
             adduct = row["Adduct"]
@@ -173,7 +174,7 @@ class CCSDataIntegration:
             )
             if not is_valid_monomer:
                 continue
-            AFTER_REMOVING_DIMERS_COUNT += 1
+            self.after_removing_dimers_count += 1
             adduct = ADDUCT_STANDARDIZATION.get(adduct, adduct)
             z = calculate_charge(adduct)
             rows.append(("METLIN", row["Molecule Name"], cid, adduct, mass, z, row["CCS_AVG"], None, row["InChIKEY"], None, None, None))
@@ -227,15 +228,12 @@ class CCSDataIntegration:
     def clean(self):
         print("STARTING DATA CLEANING...")
         df = self.db.read_df("SELECT * FROM master WHERE smi IS NOT NULL")
-        AFTER_DESALTING_MASS_VALIDATION_COUNT = len(df)
+        self.after_desalting_mass_validation_count = len(df)
 
         if df.empty:
             print("No data found to clean.")
             return
 
-        # ccs_ratio = df.groupby(['smi', 'adduct',])['ccs'] \
-        #             .transform(lambda x: x.max() / x.min())
-        # df_valid = df[ccs_ratio <= 1.01].copy()
         ccs_outlier_threshold_pct = 1.0
         group_cols = ["smi", "adduct"]
         grouped_ccs = df.groupby(group_cols)["ccs"]
@@ -257,33 +255,16 @@ class CCSDataIntegration:
 
         print(f"Original rows: {len(df)}. Rows after CCS outlier filtering: {len(df_valid)}")
 
-        def join_unique_sorted(series):
-            cleaned_vals = []
-            for s in series:
-                if pd.notna(s) and s != "":
-                    if isinstance(s, float) and s.is_integer():
-                        cleaned_vals.append(str(int(s)))
-                    else:
-                        cleaned_vals.append(str(s))
+        # (smi, adduct, ccs) matches within 4 decimal places are indistinguishable from
+        # dataset-overlap artifacts rather than genuine independent replicate measurements
+        ccs_rounded = df_valid["ccs"].round(4)
+        df_clean = (
+            df_valid.assign(ccs_rounded=ccs_rounded)
+            .drop_duplicates(subset=["smi", "adduct", "ccs_rounded"], keep="first")
+            .drop(columns=["ccs_rounded"])
+        )
 
-            unique_vals = set(cleaned_vals)
-            return ",".join(sorted(unique_vals)) if unique_vals else None
-
-        agg_rules = {
-            "id": "min",
-            "tag": join_unique_sorted,
-            "name": join_unique_sorted,
-            "pubchemId": join_unique_sorted,
-            "mass": "mean",
-            "z": "first",
-            "ccs": "mean",
-            "inchikey": join_unique_sorted,
-            "superclass": join_unique_sorted,
-            "class": join_unique_sorted,
-            "subclass": join_unique_sorted,
-        }
-
-        df_clean = df_valid.groupby(["smi", "adduct"], as_index=False).agg(agg_rules)
+        print(f"Rows after exact-duplicate removal: {len(df_clean)}")
 
         self.db.write("DROP TABLE IF EXISTS master_clean")
         self.db.write(
@@ -300,10 +281,10 @@ class CCSDataIntegration:
 
         self.db.write_df(df_clean, "master_clean", if_exists="append")
 
-        AFTER_DATA_DEDUPLICATION_COUNT = len(df_clean)
+        self.after_data_deduplication_count = len(df_clean)
         print(f"CLEANING COMPLETE")
 
-        print("All datapoints count: ", ALL_DATA_COUNT)
-        print("Datapoint count after removing dimers: ", AFTER_REMOVING_DIMERS_COUNT)
-        print("Datapoint count after SMILES mass validation: ", AFTER_DESALTING_MASS_VALIDATION_COUNT)
-        print("Datapoint count after deduplication: ", AFTER_DATA_DEDUPLICATION_COUNT)
+        print("All datapoints count: ", self.all_data_count)
+        print("Datapoint count after removing dimers: ", self.after_removing_dimers_count)
+        print("Datapoint count after SMILES mass validation: ", self.after_desalting_mass_validation_count)
+        print("Datapoint count after deduplication: ", self.after_data_deduplication_count)

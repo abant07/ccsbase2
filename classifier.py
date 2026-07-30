@@ -39,6 +39,7 @@ class SubclassClassifier:
         data = db.read_df(
             "SELECT smi, subclass FROM master_clean WHERE subclass NOT LIKE '%(predicted)' AND subclass IS NOT NULL"
         )
+        data = data.drop_duplicates(subset=["smi"], keep="first")
 
         data["subclass"] = data["subclass"].astype(str)
         class_counts = data["subclass"].value_counts()

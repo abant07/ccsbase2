@@ -33,12 +33,11 @@ class CCSBase2:
 
     def __init__(self, database_file, train_filename, test_filename, n_estimators, max_depth,
                  learning_rate, subsample, colsample_bytree, reg_lambda, min_child_weight, gamma,
-                 seed=26, use_metlin=True, subclass_frequency_threshold=None, n_iter=20, fp_min_count=40):
+                 seed=26, use_metlin=True, n_iter=20, fp_min_count=40):
         self.database_file = database_file
         self.train_file = train_filename
         self.test_file = test_filename
         self.use_metlin = use_metlin
-        self.subclass_frequency_threshold = subclass_frequency_threshold
         self.seed = seed
         self.model = None
         self.cv_metrics = None
@@ -67,7 +66,6 @@ class CCSBase2:
             test_size=0.2,
             random_state=self.seed,
             use_metlin=use_metlin,
-            subclass_frequency_threshold=subclass_frequency_threshold,
         )
 
     def fit(self):
@@ -207,3 +205,22 @@ class CCSBase2:
 
         generate_metrics_table("testset_predictions.csv", self.cv_metrics)
         compute_adduct_metrics(df_out, output_csv="adduct_metrics.csv")
+
+
+ccs_model = CCSBase2("CCSMLDatabase.db",
+                       "train_data.csv",
+                       "test_data.csv",
+                       n_estimators=6000,
+                       max_depth=10,
+                       learning_rate=0.03,
+                       subsample=0.9,
+                       colsample_bytree=0.9,
+                       reg_lambda=30,
+                       min_child_weight=5,
+                       gamma=1,
+                       seed=26,
+                       use_metlin=True,
+                       fp_min_count=40
+                    )
+ccs_model.fit()
+ccs_model.predict()

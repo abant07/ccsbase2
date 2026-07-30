@@ -1,6 +1,5 @@
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split as sk_train_test_split
 
 from rdkit import Chem
 from rdkit.Chem import rdMolDescriptors, rdFingerprintGenerator
@@ -10,6 +9,45 @@ from db import Database
 
 # ============ Train / Test Splitting ============
 
+def _split_subclass_by_adduct_distribution(subclass_df, test_size, rng):
+    count_matrix = subclass_df.groupby(["smi", "adduct"]).size().unstack(fill_value=0)
+
+    smi_order = count_matrix.index.to_numpy().copy()
+    rng.shuffle(smi_order)
+    count_matrix = count_matrix.loc[smi_order]
+
+    adducts = count_matrix.columns.to_numpy()
+    group_adduct_counts = count_matrix.to_numpy(dtype=float)
+    group_sizes = group_adduct_counts.sum(axis=1)
+
+    target_props = subclass_df["adduct"].value_counts(normalize=True).reindex(adducts, fill_value=0).to_numpy()
+    target_test_rows = round(test_size * len(subclass_df))
+
+    n_groups = group_adduct_counts.shape[0]
+    remaining_mask = np.ones(n_groups, dtype=bool)
+    test_selected = np.zeros(n_groups, dtype=bool)
+    test_adduct_counts = np.zeros(len(adducts))
+    test_row_count = 0
+
+    while remaining_mask.sum() > 1 and test_row_count < target_test_rows:
+        remaining_idx = np.nonzero(remaining_mask)[0]
+        candidate_combined = test_adduct_counts[None, :] + group_adduct_counts[remaining_idx]
+        candidate_props = candidate_combined / candidate_combined.sum(axis=1, keepdims=True)
+        distances = np.abs(candidate_props - target_props[None, :]).sum(axis=1)
+
+        chosen_idx = remaining_idx[np.argmin(distances)]
+        test_adduct_counts += group_adduct_counts[chosen_idx]
+        test_row_count += group_sizes[chosen_idx]
+        test_selected[chosen_idx] = True
+        remaining_mask[chosen_idx] = False
+
+    groups_by_smi = dict(tuple(subclass_df.groupby("smi")))
+    train_groups = [groups_by_smi[smi_order[i]] for i in range(n_groups) if not test_selected[i]]
+    test_groups = [groups_by_smi[smi_order[i]] for i in range(n_groups) if test_selected[i]]
+
+    return train_groups, test_groups
+
+
 def train_test_split_custom(
     database_file,
     train_csv_path,
@@ -17,7 +55,6 @@ def train_test_split_custom(
     test_size=0.2,
     random_state=26,
     use_metlin=True,
-    subclass_frequency_threshold=None,
 ):
     db = Database(database_file)
     query = "SELECT smi, mass, z, ccs, name, subclass, adduct, tag FROM master_clean WHERE ABS(z) = 1 AND subclass != 'NONE (predicted)'"
@@ -29,48 +66,16 @@ def train_test_split_custom(
     # predicted-subclass rows carry a "(predicted)" suffix that real labels don't
     df["subclass"] = df["subclass"].str.replace(r" \(predicted\)$", "", regex=True)
 
-    df["count"] = df.groupby(["subclass", "adduct"])["subclass"].transform("count")
-    df_split = df
-    if subclass_frequency_threshold:
-        df_split = df[df["count"] >= subclass_frequency_threshold]
+    rng = np.random.default_rng(random_state)
 
-    train_parts = []
-    test_parts = []
-
-    for (_, _), group_df in df_split.groupby(["subclass", "adduct"]):
-        group_df = group_df.copy()
-        if len(group_df) < 2:
-            train_parts.append(group_df)
-            continue
-
-        y = group_df["ccs"].values
-        y_arr = y.astype(float)
-        stratify_labels = (y_arr // 10).astype(int)
-        vc = pd.Series(stratify_labels).value_counts()
-        if vc.min() < 2:
-            stratify_labels = None
-        else:
-            n_samples = len(y_arr)
-            n_test = int(np.ceil(test_size * n_samples))
-            n_classes = vc.size
-            if n_test < n_classes:
-                stratify_labels = None
-
-        group_train, group_test = sk_train_test_split(
-            group_df,
-            test_size=test_size,
-            random_state=random_state,
-            stratify=stratify_labels,
-        )
-
-        train_parts.append(group_train)
-        test_parts.append(group_test)
+    train_parts, test_parts = [], []
+    for _, subclass_df in df.groupby("subclass"):
+        train_groups, test_groups = _split_subclass_by_adduct_distribution(subclass_df, test_size, rng)
+        train_parts.extend(train_groups)
+        test_parts.extend(test_groups)
 
     train_df = pd.concat(train_parts, ignore_index=True) if train_parts else pd.DataFrame(columns=df.columns)
     test_df = pd.concat(test_parts, ignore_index=True) if test_parts else pd.DataFrame(columns=df.columns)
-
-    train_df = train_df.drop(columns=["count"], errors="ignore")
-    test_df = test_df.drop(columns=["count"], errors="ignore")
 
     train_df.to_csv(train_csv_path, index=False)
     test_df.to_csv(test_csv_path, index=False)
@@ -93,13 +98,12 @@ def calculate_base_features(smiles: str, ion_mass: float, charge: int, adducts: 
 
     molecular_weight = rdMolDescriptors.CalcExactMolWt(mol)
     adduct_mass = ion_mass - molecular_weight
-    labute_asa = rdMolDescriptors.CalcLabuteASA(mol)
 
     adduct_one_hot = [0] * (len(adducts) + 1)
     adduct_index = adducts.index(adduct) if adduct in adducts else len(adducts)
     adduct_one_hot[adduct_index] = 1
 
-    return np.array([molecular_weight, adduct_mass, charge, labute_asa] + adduct_one_hot, dtype=float)
+    return np.array([molecular_weight, adduct_mass, charge] + adduct_one_hot, dtype=float)
 
 
 def calculate_sparse_fingerprint(smiles: str) -> dict:
