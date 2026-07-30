@@ -1,159 +1,177 @@
+import time
+
 import pandas as pd
-import numpy as np
 import joblib
-import sqlite3
 
 from xgboost import XGBRegressor
-from sklearn.model_selection import KFold
-from sklearn.metrics import mean_absolute_error, median_absolute_error, root_mean_squared_error, r2_score
+from sklearn.model_selection import KFold, RandomizedSearchCV
+from sklearn.metrics import (
+    mean_absolute_error, median_absolute_error, root_mean_squared_error, r2_score, make_scorer,
+)
+from scipy.stats import uniform, randint
 
-from utils import Utils
-from metrics import Metrics
+from constants import CCS_XGB_INTEGER_HYPERPARAMS
+from db import Database
+from training_utils import (
+    train_test_split_custom,
+    featurize_ccs_dataset,
+    build_fingerprint_vocabulary,
+    build_fingerprint_index,
+    build_feature_matrix,
+    normalize_hyperparam_range,
+)
+from metrics import (
+    generate_metrics_table,
+    compute_adduct_metrics,
+    mean_relative_error,
+    median_relative_error,
+    peak_memory_usage_mb,
+)
+
 
 class CCSBase2:
-    
-    def __init__(self, database_file, train_filename, test_filename, seed=None, use_metlin=True, subclass_frequency_threshold=None):
+
+    def __init__(self, database_file, train_filename, test_filename, n_estimators, max_depth,
+                 learning_rate, subsample, colsample_bytree, reg_lambda, min_child_weight, gamma,
+                 seed=26, use_metlin=True, subclass_frequency_threshold=None, n_iter=20, fp_min_count=40):
         self.database_file = database_file
         self.train_file = train_filename
         self.test_file = test_filename
         self.use_metlin = use_metlin
         self.subclass_frequency_threshold = subclass_frequency_threshold
+        self.seed = seed
         self.model = None
         self.cv_metrics = None
-        self.metrics = Metrics()
-        self.utils = Utils()
-        self.seed = 26 if seed is None else seed
+        self.n_iter = n_iter
+        self.fp_min_count = fp_min_count
+        self.fp_vocab = None
 
-        conn = sqlite3.connect(database_file)
-        query = "SELECT adduct FROM master_clean GROUP BY adduct HAVING COUNT(*) >= 100 ORDER BY adduct"
-        adducts = sorted(pd.read_sql_query(query, conn).to_numpy().tolist())
-        self.adducts = [adduct[0] for adduct in adducts]
+        self.hyperparam_ranges = {
+            "n_estimators": normalize_hyperparam_range(n_estimators),
+            "max_depth": normalize_hyperparam_range(max_depth),
+            "learning_rate": normalize_hyperparam_range(learning_rate),
+            "subsample": normalize_hyperparam_range(subsample),
+            "colsample_bytree": normalize_hyperparam_range(colsample_bytree),
+            "reg_lambda": normalize_hyperparam_range(reg_lambda),
+            "min_child_weight": normalize_hyperparam_range(min_child_weight),
+            "gamma": normalize_hyperparam_range(gamma),
+        }
 
-        self.utils.train_test_split_custom (
+        adducts_query = "SELECT adduct FROM master_clean GROUP BY adduct HAVING COUNT(*) >= 100 ORDER BY adduct"
+        self.adducts = sorted(row[0] for row in Database(database_file).read(adducts_query))
+
+        train_test_split_custom(
             database_file=self.database_file,
             train_csv_path=self.train_file,
             test_csv_path=self.test_file,
             test_size=0.2,
             random_state=self.seed,
             use_metlin=use_metlin,
-            subclass_frequency_threshold=subclass_frequency_threshold
+            subclass_frequency_threshold=subclass_frequency_threshold,
         )
-    
+
     def fit(self):
-        X_list, y_list = [], []
-        for _, row in pd.read_csv(self.train_file).iterrows():
-            feat_values = self.utils.calculate_descriptors(
-                row["smi"], row["mass"], row["z"], self.adducts, row["adduct"]
-            )
-            if feat_values is not None:
-                X_list.append(feat_values)
-                y_list.append(row["ccs"])
+        train_df = pd.read_csv(self.train_file)
+        base_features, fp_dicts, y, _ = featurize_ccs_dataset(train_df, self.adducts)
 
-        X = np.array(X_list, dtype=float)
-        y = np.array(y_list, dtype=float)
+        self.fp_vocab = build_fingerprint_vocabulary(fp_dicts, self.fp_min_count)
+        fp_index = build_fingerprint_index(self.fp_vocab)
+        X = build_feature_matrix(base_features, fp_dicts, fp_index)
 
-        params = dict(
+        print(f"Fingerprint vocabulary: {len(self.fp_vocab)} substructures kept (min_count={self.fp_min_count})")
+
+        fixed_params = {}
+        param_distributions = {}
+        for name, (low, high) in self.hyperparam_ranges.items():
+            is_integer = name in CCS_XGB_INTEGER_HYPERPARAMS
+            if low == high:
+                fixed_params[name] = int(low) if is_integer else low
+            elif is_integer:
+                param_distributions[name] = randint(int(low), int(high) + 1)
+            else:
+                param_distributions[name] = uniform(loc=low, scale=high - low)
+
+        base_estimator = XGBRegressor(
             objective="reg:squarederror",
-            n_estimators=6000,
-            max_depth=10,
-            learning_rate=0.03,
-            subsample=0.9,
-            colsample_bytree=0.9,
-            reg_lambda=30,
-            min_child_weight=5,
-            gamma=1,
             n_jobs=-1,
             tree_method="hist",
             verbosity=1,
+            random_state=self.seed,
+            **fixed_params,
         )
 
-        # -------- 5-fold CV --------
-        cv = KFold(n_splits=5, shuffle=True, random_state=self.seed)
+        if not param_distributions:
+            fit_start = time.perf_counter()
+            self.model = base_estimator
+            self.model.fit(X, y)
+            fit_time = time.perf_counter() - fit_start
+            self.cv_metrics = None
+            print(f"No hyperparameters to search -- fit directly in {fit_time:.2f}s")
+        else:
+            scoring = {
+                "mae": "neg_mean_absolute_error",
+                "mdae": "neg_median_absolute_error",
+                "rmse": "neg_root_mean_squared_error",
+                "mre_pct": make_scorer(mean_relative_error, greater_is_better=False),
+                "mdre_pct": make_scorer(median_relative_error, greater_is_better=False),
+                "r2": "r2",
+            }
 
-        fold_metrics = []
-        for fold, (tr_idx, te_idx) in enumerate(cv.split(X), start=1):
-            model = XGBRegressor(**params)
-            model.fit(X[tr_idx], y[tr_idx])
+            n_folds = 5
+            print(
+                f"Running random search over {list(param_distributions.keys())} "
+                f"({self.n_iter} candidates x {n_folds} folds = {self.n_iter * n_folds} fits)"
+            )
 
-            y_pred = model.predict(X[te_idx])
-            y_true = y[te_idx]
+            search = RandomizedSearchCV(
+                estimator=base_estimator,
+                param_distributions=param_distributions,
+                n_iter=self.n_iter,
+                cv=KFold(n_splits=n_folds, shuffle=True, random_state=self.seed),
+                scoring=scoring,
+                refit="rmse",
+                random_state=self.seed,
+                n_jobs=1,
+                verbose=3,
+            )
 
-            abs_err = np.abs(y_true - y_pred)
-            mae_test = float(abs_err.mean())
-            mdae_test = float(np.median(abs_err))
-            rmse_test = float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
+            search_start = time.perf_counter()
+            search.fit(X, y)
+            search_time = time.perf_counter() - search_start
 
-            rel_err = abs_err / y_true * 100  # assumes y_true != 0
-            mre_test = float(rel_err.mean())
-            mdre_test = float(np.median(rel_err))
+            print(f"Random search complete in {search_time:.2f}s | best params: {search.best_params_}")
 
-            ss_res = float(np.sum((y_true - y_pred) ** 2))
-            ss_tot = float(np.sum((y_true - np.mean(y_true)) ** 2))
-            r2 = float(1 - ss_res / ss_tot) if ss_tot != 0 else float("nan")
+            best_index = search.best_index_
+            cv_results = search.cv_results_
+            negated_metrics = {"mae", "mdae", "rmse", "mre_pct", "mdre_pct"}
+            self.cv_metrics = {
+                key: (
+                    round(cv_results[f"mean_test_{key}"][best_index] * (-1 if key in negated_metrics else 1), 4),
+                    round(cv_results[f"std_test_{key}"][best_index], 4),
+                )
+                for key in ("mae", "mdae", "rmse", "mre_pct", "mdre_pct", "r2")
+            }
+            print(f"CV metrics (winning candidate, mean ± std across folds): {self.cv_metrics}")
 
-            print(f"\nFold {fold}")
-            print("MAE:", round(mae_test, 4))
-            print("MDAE:", round(mdae_test, 4))
-            print("RMSE:", round(rmse_test, 4))
-            print("MRE (%):", round(mre_test, 4))
-            print("MDRE (%):", round(mdre_test, 4))
-            print("R2:", round(r2, 4))
+            self.model = search.best_estimator_
 
-            fold_metrics.append([mae_test, mdae_test, rmse_test, mre_test, mdre_test, r2])
-
-        fold_metrics = np.array(fold_metrics, dtype=float)
-        mean_metrics = np.nanmean(fold_metrics, axis=0)
-        std_metrics = np.nanstd(fold_metrics, axis=0)
-
-        print("\n=== 5-Fold CV (mean ± std) ===")
-        print("MAE:",  round(mean_metrics[0], 4), "±", round(std_metrics[0], 4))
-        print("MDAE:", round(mean_metrics[1], 4), "±", round(std_metrics[1], 4))
-        print("RMSE:", round(mean_metrics[2], 4), "±", round(std_metrics[2], 4))
-        print("MRE (%):",  round(mean_metrics[3], 4), "±", round(std_metrics[3], 4))
-        print("MDRE (%):", round(mean_metrics[4], 4), "±", round(std_metrics[4], 4))
-        print("R2:",   round(mean_metrics[5], 4), "±", round(std_metrics[5], 4))
-
-        self.cv_metrics = {
-            "mae": (round(mean_metrics[0], 4), round(std_metrics[0], 4)),
-            "mdae": (round(mean_metrics[1], 4), round(std_metrics[1], 4)),
-            "rmse": (round(mean_metrics[2], 4), round(std_metrics[2], 4)),
-            "mre_pct": (round(mean_metrics[3], 4), round(std_metrics[3], 4)),
-            "mdre_pct": (round(mean_metrics[4], 4), round(std_metrics[4], 4)),
-            "r2": (round(mean_metrics[5], 4), round(std_metrics[5], 4)),
-        }
-
-        self.model = XGBRegressor(**params)
-        self.model.fit(X, y)
         joblib.dump(self.model, "ccsbase2.joblib")
+        joblib.dump(self.fp_vocab, "ccsbase2_fp_vocab.joblib")
+
+        print(f"Trained on {len(X)} rows | Peak memory usage: {peak_memory_usage_mb():.1f} MB")
 
     def predict(self):
         print("Starting Prediction on Test Set")
 
-        def mean_relative_error(y_true, y_pred, eps=1e-12):
-            y_true = np.asarray(y_true)
-            y_pred = np.asarray(y_pred)
-            rel_err = np.abs(y_pred - y_true) / np.maximum(np.abs(y_true), eps)
-            return float(np.mean(rel_err)) * 100
-        
-        def median_relative_error(y_true, y_pred, eps=1e-12):
-            y_true = np.asarray(y_true)
-            y_pred = np.asarray(y_pred)
-            rel_err = np.abs(y_pred - y_true) / np.maximum(np.abs(y_true), eps)
-            return float(np.median(rel_err)) * 100
-        
-        X_list = []
-        y_list = []
-        metadata = []
-        for _, row in pd.read_csv(self.test_file).iterrows():
-            feat_values = self.utils.calculate_descriptors(row['smi'], row['mass'], row['z'], self.adducts, row['adduct'])
-            if feat_values is not None:
-                X_list.append(feat_values)
-                y_list.append(row['ccs'])
-                metadata.append([row["tag"], row["subclass"], row["adduct"], row["name"], row["smi"], row["z"]])
+        test_df = pd.read_csv(self.test_file)
+        base_features, fp_dicts, y_test, metadata = featurize_ccs_dataset(test_df, self.adducts)
 
-        X_test = np.asarray(X_list)
-        y_test = np.asarray(y_list)
+        fp_index = build_fingerprint_index(self.fp_vocab)
+        X_test = build_feature_matrix(base_features, fp_dicts, fp_index)
+
+        predict_start = time.perf_counter()
         y_pred_test = self.model.predict(X_test)
+        predict_time = time.perf_counter() - predict_start
 
         mae_test = mean_absolute_error(y_test, y_pred_test)
         mdae_test = median_absolute_error(y_test, y_pred_test)
@@ -169,9 +187,12 @@ class CCSBase2:
         print("MRE (%):", round(mre_test, 4))
         print("MDRE (%):", round(mdre_test, 4))
         print("R2:", round(r2, 4))
+        print(
+            f"\nInference time: {predict_time:.4f}s for {len(X_test)} rows "
+            f"({predict_time / max(len(X_test), 1) * 1000:.3f} ms/row) | "
+            f"Peak memory usage: {peak_memory_usage_mb():.1f} MB"
+        )
 
-
-        # === Save predictions ===
         df_out = pd.DataFrame({
             "Tag": [m[0] for m in metadata],
             "Subclass": [m[1] for m in metadata],
@@ -180,8 +201,9 @@ class CCSBase2:
             "SMILES": [m[4] for m in metadata],
             "Charge": [m[5] for m in metadata],
             "CCS_True": y_test,
-            "CCS_Pred": y_pred_test
+            "CCS_Pred": y_pred_test,
         })
         df_out.to_csv("testset_predictions.csv", index=False)
 
-        self.metrics.generate_metrics_table("testset_predictions.csv", self.cv_metrics)
+        generate_metrics_table("testset_predictions.csv", self.cv_metrics)
+        compute_adduct_metrics(df_out, output_csv="adduct_metrics.csv")

@@ -5,5 +5,6 @@
 # fingerprint_explorer/ (or elsewhere) for Streamlit / sharing without git add -f.
 /ccsbase2.joblib
 /ccsbase2_classifier.joblib
+/ccsbase2_fp_vocab.joblib
 /ccsbase2.json
 /CCSMLDatabase.db

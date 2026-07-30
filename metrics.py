@@ -1,124 +1,165 @@
+import resource
+import sys
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from sklearn.metrics import precision_recall_fscore_support
 
-class Metrics:
-    def generate_metrics_table(self, csv_path: str, cv_score=None, output_image: str = "metrics_table.png"):
-        df = pd.read_csv(csv_path)
 
-        y_true = df["CCS_True"]
-        y_pred = df["CCS_Pred"]
+def macro_metrics(y_true, y_pred):
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        y_true, y_pred, average="macro", zero_division=0
+    )
+    return float(precision), float(recall), float(f1)
 
-        abs_error = (y_true - y_pred).abs()
+
+def softmax_entropy(proba, eps=1e-12):
+    clipped_proba = np.clip(proba, eps, 1.0)
+    return -np.sum(clipped_proba * np.log(clipped_proba), axis=1)
+
+
+def mean_relative_error(y_true, y_pred, eps=1e-12):
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+    rel_err = np.abs(y_pred - y_true) / np.maximum(np.abs(y_true), eps)
+    return float(np.mean(rel_err)) * 100
+
+
+def median_relative_error(y_true, y_pred, eps=1e-12):
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+    rel_err = np.abs(y_pred - y_true) / np.maximum(np.abs(y_true), eps)
+    return float(np.median(rel_err)) * 100
+
+
+def peak_memory_usage_mb():
+    peak_kb_or_bytes = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak_kb_or_bytes / (1024 ** 2) if sys.platform == "darwin" else peak_kb_or_bytes / 1024
+
+
+def generate_metrics_table(csv_path: str, cv_score=None, output_image: str = "metrics_table.png"):
+    df = pd.read_csv(csv_path)
+
+    y_true = df["CCS_True"]
+    y_pred = df["CCS_Pred"]
+
+    abs_error = (y_true - y_pred).abs()
+    rel_error = abs_error / y_true * 100
+
+    mae = abs_error.mean()
+    mdae = abs_error.median()
+    rmse = np.sqrt(((y_true - y_pred) ** 2).mean())
+
+    ss_res = ((y_true - y_pred) ** 2).sum()
+    ss_tot = ((y_true - y_true.mean()) ** 2).sum()
+    r2 = 1 - ss_res / ss_tot if ss_tot != 0 else np.nan
+
+    mre = rel_error.mean()
+    mdre = rel_error.median()
+
+    total = len(df)
+
+    count_under_1pct = (rel_error < 1).sum()
+    count_under_2pct = (rel_error < 2).sum()
+    count_under_3pct = (rel_error < 3).sum()
+    count_under_5pct = (rel_error < 5).sum()
+
+    pct_under_1pct = count_under_1pct / total * 100
+    pct_under_2pct = count_under_2pct / total * 100
+    pct_under_3pct = count_under_3pct / total * 100
+    pct_under_5pct = count_under_5pct / total * 100
+
+    metric_specs = [
+        ("MAE (Å)", f"{mae:.3f}", "mae", "Mean Absolute Error (test)"),
+        ("MDAE (Å)", f"{mdae:.3f}", "mdae", "Median Absolute Error (test)"),
+        ("RMSE (Å)", f"{rmse:.3f}", "rmse", "Root Mean Squared Error (test)"),
+        ("MRE (%)", f"{mre:.2f}", "mre_pct", "Mean Relative Error (test)"),
+        ("MDRE (%)", f"{mdre:.2f}", "mdre_pct", "Median Relative Error (test)"),
+        ("R²", f"{r2:.3f}", "r2", "Coefficient of Determination (test)"),
+    ]
+
+    rows = []
+    for label, value, cv_key, description in metric_specs:
+        rows.append((label, value, description))
+        if cv_score is not None:
+            mean, std = cv_score[cv_key]
+            rows.append((f"CV {label}", f"{mean} ± {std}", "5-fold CV mean ± std"))
+
+    rows.append(("Total predictions (n)", f"{total:,}", ""))
+    rows.append(("Predictions <1% RE", f"{count_under_1pct:,} ({pct_under_1pct:.1f}%)", "Extremely accurate predictions"))
+    rows.append(("Predictions <2% RE", f"{count_under_2pct:,} ({pct_under_2pct:.1f}%)", "Accurate predictions"))
+    rows.append(("Predictions <3% RE", f"{count_under_3pct:,} ({pct_under_3pct:.1f}%)", "Typically considered good"))
+    rows.append(("Predictions <5% RE", f"{count_under_5pct:,} ({pct_under_5pct:.1f}%)", "Decent"))
+
+    table_df = pd.DataFrame(rows, columns=["Metric", "Value", "Description / Note"])
+
+    _, ax = plt.subplots(figsize=(10, 5.4))
+    ax.axis("off")
+    table = ax.table(
+        cellText=table_df.values,
+        colLabels=table_df.columns,
+        cellLoc="center",
+        loc="center",
+    )
+
+    table.auto_set_font_size(False)
+    table.set_fontsize(12)
+    table.scale(1.2, 2.2)
+
+    for (i, j), cell in table.get_celld().items():
+        if i == 0:
+            cell.set_facecolor("#4472C4")
+            cell.set_text_props(weight="bold", color="white")
+        cell.set_edgecolor("#D3D3D3")
+        cell.set_height(0.09)
+        if j == 0:
+            cell.get_text().set_weight("bold")
+
+    plt.savefig(output_image, dpi=300, bbox_inches="tight", facecolor="white")
+    plt.close()
+
+
+def compute_adduct_metrics(df: pd.DataFrame, output_csv: str = None) -> pd.DataFrame:
+    rows = []
+    for adduct, group in df.groupby("Adduct"):
+        y_true = group["CCS_True"].to_numpy(dtype=float)
+        y_pred = group["CCS_Pred"].to_numpy(dtype=float)
+        n = len(group)
+
+        abs_error = np.abs(y_true - y_pred)
         rel_error = abs_error / y_true * 100
 
         mae = abs_error.mean()
-        mdae = abs_error.median()
-        rmse = np.sqrt(((y_true - y_pred) ** 2).mean())
-
-        ss_res = ((y_true - y_pred) ** 2).sum()
-        ss_tot = ((y_true - y_true.mean()) ** 2).sum()
-        r2 = 1 - ss_res / ss_tot if ss_tot != 0 else np.nan
-
+        mdae = np.median(abs_error)
+        rmse = np.sqrt(np.mean((y_true - y_pred) ** 2))
         mre = rel_error.mean()
-        mdre = rel_error.median()
+        mdre = np.median(rel_error)
 
-        total = len(df)
+        if n > 1:
+            ss_res = np.sum((y_true - y_pred) ** 2)
+            ss_tot = np.sum((y_true - y_true.mean()) ** 2)
+            r2 = 1 - ss_res / ss_tot if ss_tot != 0 else np.nan
+        else:
+            r2 = np.nan
 
-        thresh_1 = (rel_error < 1).sum()
-        thresh_2 = (rel_error < 2).sum()
-        thresh_3 = (rel_error < 3).sum()
-        thresh_5 = (rel_error < 5).sum()
+        rows.append({
+            "Adduct": adduct,
+            "N": n,
+            "MAE": round(float(mae), 4),
+            "MDAE": round(float(mdae), 4),
+            "RMSE": round(float(rmse), 4),
+            "MRE (%)": round(float(mre), 4),
+            "MDRE (%)": round(float(mdre), 4),
+            "R2": round(float(r2), 4) if not np.isnan(r2) else np.nan,
+        })
 
-        pct_1 = thresh_1 / total * 100
-        pct_2 = thresh_2 / total * 100
-        pct_3 = thresh_3 / total * 100
-        pct_5 = thresh_5 / total * 100
+    result = pd.DataFrame(rows).sort_values("N", ascending=False).reset_index(drop=True)
 
-        data = {
-            "Metric": [
-                "MAE (Å)",
-                "CV MAE (Å)",
-                "MDAE (Å)",
-                "CV MDAE (Å)",
-                "RMSE (Å)",
-                "CV RMSE (Å)",
-                "MRE (%)",
-                "CV MRE (%)",
-                "MDRE (%)",
-                "CV MDRE (%)",
-                "R²",
-                "CV R²",
-                "Total predictions (n)",
-                "Predictions <1% RE",
-                "Predictions <2% RE",
-                "Predictions <3% RE",
-                "Predictions <5% RE",
-            ],
-            "Value": [
-                f"{mae:.3f}",
-                f"{cv_score['mae'][0]} ± {cv_score['mae'][1]}",
-                f"{mdae:.3f}",
-                f"{cv_score['mdae'][0]} ± {cv_score['mdae'][1]}",
-                f"{rmse:.3f}",
-                f"{cv_score['rmse'][0]} ± {cv_score['rmse'][1]}",
-                f"{mre:.2f}",
-                f"{cv_score['mre_pct'][0]} ± {cv_score['mre_pct'][1]}",
-                f"{mdre:.2f}",
-                f"{cv_score['mdre_pct'][0]} ± {cv_score['mdre_pct'][1]}",
-                f"{r2:.3f}",
-                f"{cv_score['r2'][0]} ± {cv_score['r2'][1]}",
-                f"{total:,}",
-                f"{thresh_1:,} ({pct_1:.1f}%)",
-                f"{thresh_2:,} ({pct_2:.1f}%)",
-                f"{thresh_3:,} ({pct_3:.1f}%)",
-                f"{thresh_5:,} ({pct_5:.1f}%)",
-            ],
-            "Description / Note": [
-                "Mean Absolute Error (test)",
-                "5-fold CV mean ± std",
-                "Median Absolute Error (test)",
-                "5-fold CV mean ± std",
-                "Root Mean Squared Error (test)",
-                "5-fold CV mean ± std",
-                "Mean Relative Error (test)",
-                "5-fold CV mean ± std",
-                "Median Relative Error (test)",
-                "5-fold CV mean ± std",
-                "Coefficient of Determination (test)",
-                "5-fold CV mean ± std",
-                "",
-                "Extremely accurate predictions",
-                "Accurate predictions",
-                "Typically considered good",
-                "Decent",
-            ],
-        }
+    print(f"\n=== Per-Adduct Test Metrics ({len(result)} adducts) ===")
+    print(result.to_string(index=False))
 
-        table_df = pd.DataFrame(data)
+    if output_csv:
+        result.to_csv(output_csv, index=False)
 
-        fig, ax = plt.subplots(figsize=(10, 5.4))
-        ax.axis("off")
-        table = ax.table(
-            cellText=table_df.values,
-            colLabels=table_df.columns,
-            cellLoc="center",
-            loc="center",
-        )
-
-        table.auto_set_font_size(False)
-        table.set_fontsize(12)
-        table.scale(1.2, 2.2)
-
-        for (i, j), cell in table.get_celld().items():
-            if i == 0:
-                cell.set_facecolor("#4472C4")
-                cell.set_text_props(weight="bold", color="white")
-            cell.set_edgecolor("#D3D3D3")
-            cell.set_height(0.09)
-            if j == 0:
-                cell.get_text().set_weight("bold")
-
-        plt.savefig(output_image, dpi=300, bbox_inches="tight", facecolor="white")
-        plt.close()
-
+    return result
