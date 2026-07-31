@@ -12,16 +12,13 @@ from utils import calculate_charge, desalt_and_mass
 
 INSERT_MASTER_SQL = """INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass)
                         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+INSERT_MASTER_NODIMER_SQL = """INSERT INTO master_nodimer(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass)
+                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 
 class CCSDataIntegration:
     def __init__(self, db_filename: str):
         self.db_filename = db_filename
         self.db = Database(db_filename)
-
-        self.all_data_count = 0
-        self.after_removing_dimers_count = 0
-        self.after_desalting_mass_validation_count = 0
-        self.after_data_deduplication_count = 0
 
         self.db.write(
             "CREATE TABLE IF NOT EXISTS master("
@@ -32,14 +29,22 @@ class CCSDataIntegration:
             "superclass TEXT, class TEXT, subclass TEXT)"
         )
 
+        self.db.write(
+            "CREATE TABLE IF NOT EXISTS master_nodimer("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "tag TEXT, name TEXT, pubchemId INTEGER, "
+            "adduct TEXT, mass REAL, z INTEGER, "
+            "ccs REAL, smi TEXT, inchikey TEXT, "
+            "superclass TEXT, class TEXT, subclass TEXT)"
+        )
+
     def add_ccsbase(self):
         print("ADDING CCSBASE")
-        c3s = Database("./datasets/C3S.db")
+        c3s = Database("./datasets/CCSbase.db")
         records = c3s.read("SELECT * FROM master WHERE smi IS NOT NULL")
 
-        rows = []
+        all_rows, nodimer_rows = [], []
         for record in records:
-            self.all_data_count += 1
             name = record[1]
             adduct = ADDUCT_STANDARDIZATION.get(record[2], record[2])
             mass = record[3]
@@ -50,31 +55,34 @@ class CCSDataIntegration:
             class_ = record[12]
             subclass = record[13]
 
-            if "[2M" in adduct:
-                continue
-            self.after_removing_dimers_count += 1
-
             z = calculate_charge(adduct)
-            desalted_smiles, isotopic_mass = desalt_and_mass(smiles)
-            weight_diff = abs(float(mass) - (isotopic_mass + ADDUCT_OFFSETS[adduct]))
-            tolerance = max(1, 0.01 * isotopic_mass)
-            is_reliable = src_tag != "nguyen25" and weight_diff <= tolerance
+            is_dimer = "[2M" in adduct
 
-            rows.append((
-                "CCSBASE", name, None, adduct, mass, z, ccs,
-                desalted_smiles if is_reliable else None, None,
-                superclass, class_, subclass,
-            ))
+            if is_dimer:
+                row = ("CCSBASE", name, None, adduct, mass, z, ccs, None, None, superclass, class_, subclass)
+            else:
+                desalted_smiles, isotopic_mass = desalt_and_mass(smiles)
+                weight_diff = abs(float(mass) - (isotopic_mass + ADDUCT_OFFSETS[adduct]))
+                tolerance = max(1, 0.01 * isotopic_mass)
+                is_reliable = src_tag != "nguyen25" and weight_diff <= tolerance
+                row = (
+                    "CCSBASE", name, None, adduct, mass, z, ccs,
+                    desalted_smiles if is_reliable else None, None,
+                    superclass, class_, subclass,
+                )
+                nodimer_rows.append(row)
 
-        self.db.write_many(INSERT_MASTER_SQL, rows)
+            all_rows.append(row)
+
+        self.db.write_many(INSERT_MASTER_SQL, all_rows)
+        self.db.write_many(INSERT_MASTER_NODIMER_SQL, nodimer_rows)
 
     def add_allccs(self):
         print("ADDING ALLCCS")
         allccs = pd.read_csv("./datasets/allccs.csv")
 
-        rows = []
+        all_rows, nodimer_rows = [], []
         for _, row in allccs.iterrows():
-            self.all_data_count += 1
             has_required_fields = (
                 pd.notna(row["m/z"]) and pd.notna(row["Adduct"])
                 and pd.notna(row["CCS"]) and pd.notna(row["Name"])
@@ -84,14 +92,15 @@ class CCSDataIntegration:
                 continue
 
             adduct = ADDUCT_STANDARDIZATION.get(row["Adduct"], row["Adduct"])
-            if "[2M" in adduct:
-                continue
-            self.after_removing_dimers_count += 1
-
             z = calculate_charge(adduct)
-            rows.append(("ALLCCS", row["Name"], None, adduct, row["m/z"], z, row["CCS"], None, None, None, None, None))
+            record = ("ALLCCS", row["Name"], None, adduct, row["m/z"], z, row["CCS"], None, None, None, None, None)
 
-        self.db.write_many(INSERT_MASTER_SQL, rows)
+            all_rows.append(record)
+            if "[2M" not in adduct:
+                nodimer_rows.append(record)
+
+        self.db.write_many(INSERT_MASTER_SQL, all_rows)
+        self.db.write_many(INSERT_MASTER_NODIMER_SQL, nodimer_rows)
 
     def add_pnnl(self):
         print("ADDING PNNL")
@@ -108,10 +117,9 @@ class CCSDataIntegration:
             ("mMinusBrO", "mMinusBrOCCS", "[M-BrO]+"),
         ]
 
-        rows = []
+        # none of PNNL's adducts represent dimers, so master and master_nodimer match exactly
+        all_rows = []
         for _, row in pnnl.iterrows():
-            self.all_data_count += 1
-            self.after_removing_dimers_count += 1
             if not (pd.notna(row["PubChem CID"]) and pd.notna(row["InChi"])):
                 continue
 
@@ -122,19 +130,19 @@ class CCSDataIntegration:
             for mass_col, ccs_col, adduct in mass_col_ccs_col_adduct:
                 if pd.notna(row[ccs_col]):
                     z = calculate_charge(adduct)
-                    rows.append(("PNNL", name, cid, adduct, row[mass_col], z, row[ccs_col], None, inchikey, None, None, None))
+                    all_rows.append(("PNNL", name, cid, adduct, row[mass_col], z, row[ccs_col], None, inchikey, None, None, None))
 
-        self.db.write_many(INSERT_MASTER_SQL, rows)
+        self.db.write_many(INSERT_MASTER_SQL, all_rows)
+        self.db.write_many(INSERT_MASTER_NODIMER_SQL, all_rows)
 
     def add_acs(self):
         print("ADDING ACS")
         sheets = pd.read_excel("./datasets/acs.xlsx", sheet_name=["M+H", "M+Na", "M-H", "Others"])
 
-        rows = []
+        # ACS's source sheets don't encode dimers, so master and master_nodimer match exactly
+        all_rows = []
         for _, df in sheets.items():
             for _, row in df.iterrows():
-                self.all_data_count += 1
-                self.after_removing_dimers_count += 1
                 cid = row["PubChem CID"]
                 mass = None if pd.isna(row["m/z"]) else row["m/z"]
                 adduct = None if pd.isna(row["adduct"]) else row["adduct"]
@@ -154,35 +162,40 @@ class CCSDataIntegration:
                     continue
 
                 z = calculate_charge(adduct)
-                rows.append(("ACS", name, cid, adduct, mass, z, ccs, None, inchikey, superclass, class_, subclass))
+                all_rows.append(("ACS", name, cid, adduct, mass, z, ccs, None, inchikey, superclass, class_, subclass))
 
-        self.db.write_many(INSERT_MASTER_SQL, rows)
+        self.db.write_many(INSERT_MASTER_SQL, all_rows)
+        self.db.write_many(INSERT_MASTER_NODIMER_SQL, all_rows)
 
     def add_metlin(self):
         print("ADDING METLIN")
         metlin = pd.read_csv("./datasets/metlin.csv")
 
-        rows = []
+        all_rows, nodimer_rows = [], []
         for _, row in metlin.iterrows():
-            self.all_data_count += 1
             cid = row["pubChem"]
             mass = row["m/z"]
             adduct = row["Adduct"]
-            is_valid_monomer = (
+            is_valid_row = (
                 pd.notna(cid) and str(cid).isnumeric()
-                and row["Dimer.1"] == "Monomer" and mass and adduct and row["% CV"] <= 1
+                and mass and adduct and row["% CV"] <= 1
             )
-            if not is_valid_monomer:
+            if not is_valid_row:
                 continue
-            self.after_removing_dimers_count += 1
+
             adduct = ADDUCT_STANDARDIZATION.get(adduct, adduct)
             z = calculate_charge(adduct)
-            rows.append(("METLIN", row["Molecule Name"], cid, adduct, mass, z, row["CCS_AVG"], None, row["InChIKEY"], None, None, None))
+            record = ("METLIN", row["Molecule Name"], cid, adduct, mass, z, row["CCS_AVG"], None, row["InChIKEY"], None, None, None)
 
-        self.db.write_many(INSERT_MASTER_SQL, rows)
+            all_rows.append(record)
+            if row["Dimer.1"] == "Monomer":
+                nodimer_rows.append(record)
+
+        self.db.write_many(INSERT_MASTER_SQL, all_rows)
+        self.db.write_many(INSERT_MASTER_NODIMER_SQL, nodimer_rows)
 
     def find_smiles(self):
-        records = self.db.read("SELECT id, name, pubchemId, mass, adduct FROM master WHERE smi IS NULL")
+        records = self.db.read("SELECT id, name, pubchemId, mass, adduct FROM master_nodimer WHERE smi IS NULL")
 
         for id_, name, cid, mass, adduct in records:
             if cid:
@@ -192,12 +205,12 @@ class CCSDataIntegration:
 
             if smiles:
                 self.db.write(
-                    "UPDATE master SET smi = ?, inchikey = ? WHERE id = ?",
+                    "UPDATE master_nodimer SET smi = ?, inchikey = ? WHERE id = ?",
                     (smiles.get("smiles"), smiles.get("inchikey"), id_),
                 )
 
     def find_classes(self):
-        records = self.db.read("SELECT id, inchikey FROM master WHERE superclass IS NULL AND inchikey NOT NULL")
+        records = self.db.read("SELECT id, inchikey FROM master_nodimer WHERE superclass IS NULL AND inchikey NOT NULL")
 
         cache = {}
         for id_, inchikey in records:
@@ -210,25 +223,24 @@ class CCSDataIntegration:
                 cache[inchikey] = (superclass, class_, subclass)
 
             self.db.write(
-                "UPDATE master SET superclass = ?, class = ?, subclass = ? WHERE id = ?",
+                "UPDATE master_nodimer SET superclass = ?, class = ?, subclass = ? WHERE id = ?",
                 (superclass, class_, subclass, id_),
             )
 
     def find_inchikey(self):
-        records = self.db.read("SELECT id, smi FROM master WHERE smi IS NOT NULL and inchikey IS NULL")
+        records = self.db.read("SELECT id, smi FROM master_nodimer WHERE smi IS NOT NULL and inchikey IS NULL")
 
         for id_, smi in records:
             result = get_cid_inchikey_from_smiles(smi)
             if result:
                 self.db.write(
-                    "UPDATE master set pubchemId = ?, inchikey = ? where id = ?",
+                    "UPDATE master_nodimer set pubchemId = ?, inchikey = ? where id = ?",
                     (result["cid"], result["inchikey"], id_),
                 )
 
     def clean(self):
         print("STARTING DATA CLEANING...")
-        df = self.db.read_df("SELECT * FROM master WHERE smi IS NOT NULL")
-        self.after_desalting_mass_validation_count = len(df)
+        df = self.db.read_df("SELECT * FROM master_nodimer WHERE smi IS NOT NULL")
 
         if df.empty:
             print("No data found to clean.")
@@ -281,10 +293,4 @@ class CCSDataIntegration:
 
         self.db.write_df(df_clean, "master_clean", if_exists="append")
 
-        self.after_data_deduplication_count = len(df_clean)
         print(f"CLEANING COMPLETE")
-
-        print("All datapoints count: ", self.all_data_count)
-        print("Datapoint count after removing dimers: ", self.after_removing_dimers_count)
-        print("Datapoint count after SMILES mass validation: ", self.after_desalting_mass_validation_count)
-        print("Datapoint count after deduplication: ", self.after_data_deduplication_count)
