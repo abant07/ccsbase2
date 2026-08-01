@@ -10,7 +10,7 @@ from sklearn.metrics import (
 )
 from scipy.stats import uniform, randint
 
-from constants import CCS_XGB_INTEGER_HYPERPARAMS
+from constants import XGB_INTEGER_HYPERPARAMS
 from db import Database
 from training_utils import (
     train_test_split_custom,
@@ -81,7 +81,7 @@ class CCSBase2:
         fixed_params = {}
         param_distributions = {}
         for name, (low, high) in self.hyperparam_ranges.items():
-            is_integer = name in CCS_XGB_INTEGER_HYPERPARAMS
+            is_integer = name in XGB_INTEGER_HYPERPARAMS
             if low == high:
                 fixed_params[name] = int(low) if is_integer else low
             elif is_integer:

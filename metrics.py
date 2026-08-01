@@ -4,19 +4,6 @@ import sys
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.metrics import precision_recall_fscore_support
-
-
-def macro_metrics(y_true, y_pred):
-    precision, recall, f1, _ = precision_recall_fscore_support(
-        y_true, y_pred, average="macro", zero_division=0
-    )
-    return float(precision), float(recall), float(f1)
-
-
-def softmax_entropy(proba, eps=1e-12):
-    clipped_proba = np.clip(proba, eps, 1.0)
-    return -np.sum(clipped_proba * np.log(clipped_proba), axis=1)
 
 
 def mean_relative_error(y_true, y_pred, eps=1e-12):

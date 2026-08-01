@@ -128,4 +128,4 @@ ADDUCT_STANDARDIZATION = {
     "[M+FA-H]-": "[M+HCOO]-",
 }
 
-CCS_XGB_INTEGER_HYPERPARAMS = {"n_estimators", "max_depth"}
+XGB_INTEGER_HYPERPARAMS = {"n_estimators", "max_depth"}
