@@ -1,8 +1,10 @@
 import time
 
 import pandas as pd
+import numpy as np
 import joblib
 
+from rdkit import Chem
 from xgboost import XGBRegressor
 from sklearn.model_selection import KFold, RandomizedSearchCV
 from sklearn.metrics import (
@@ -10,11 +12,15 @@ from sklearn.metrics import (
 )
 from scipy.stats import uniform, randint
 
-from constants import XGB_INTEGER_HYPERPARAMS
+from constants import ADDUCT_OFFSETS, XGB_INTEGER_HYPERPARAMS
 from db import Database
+from utils import calculate_charge
 from training_utils import (
     train_test_split_custom,
     featurize_ccs_dataset,
+    calculate_base_features,
+    calculate_sparse_fingerprint,
+    vectorize_sparse_fp,
     build_fingerprint_vocabulary,
     build_fingerprint_index,
     build_feature_matrix,
@@ -28,11 +34,16 @@ from metrics import (
     peak_memory_usage_mb,
 )
 
+MODEL_PATH = "ccsbase2.joblib"
+FP_VOCAB_PATH = "ccsbase2_fp_vocab.joblib"
+ADDUCTS_PATH = "ccsbase2_adducts.joblib"
+
 
 class CCSBase2:
 
-    def __init__(self, database_file, train_filename, test_filename, n_estimators, max_depth,
-                 learning_rate, subsample, colsample_bytree, reg_lambda, min_child_weight, gamma,
+    def __init__(self, database_file="CCSMLDatabase.db", train_filename="train_data.csv", test_filename="train_data.csv", 
+                 n_estimators=600, max_depth=10,
+                 learning_rate=0.03, subsample=0.9, colsample_bytree=0.9, reg_lambda=30, min_child_weight=5, gamma=1,
                  seed=26, use_metlin=True, n_iter=20, fp_min_count=40):
         self.database_file = database_file
         self.train_file = train_filename
@@ -153,13 +164,14 @@ class CCSBase2:
 
             self.model = search.best_estimator_
 
-        joblib.dump(self.model, "ccsbase2.joblib")
-        joblib.dump(self.fp_vocab, "ccsbase2_fp_vocab.joblib")
+        joblib.dump(self.model, MODEL_PATH)
+        joblib.dump(self.fp_vocab, FP_VOCAB_PATH)
+        joblib.dump(self.adducts, ADDUCTS_PATH)
 
         print(f"Trained on {len(X)} rows | Peak memory usage: {peak_memory_usage_mb():.1f} MB")
 
-    def predict(self):
-        print("Starting Prediction on Test Set")
+    def eval(self):
+        print("Starting Evaluation on Test Set")
 
         test_df = pd.read_csv(self.test_file)
         base_features, fp_dicts, y_test, metadata = featurize_ccs_dataset(test_df, self.adducts)
@@ -206,6 +218,62 @@ class CCSBase2:
         generate_metrics_table("testset_predictions.csv", self.cv_metrics)
         compute_adduct_metrics(df_out, output_csv="adduct_metrics.csv")
 
+    def predict(self, input_csv):
+        """Deployed-model inference on an arbitrary CSV (columns: smi, adduct) -- loads from joblib artifacts."""
+        print("Starting Inference")
+
+        model = joblib.load(MODEL_PATH)
+        fp_vocab = joblib.load(FP_VOCAB_PATH)
+        adducts = joblib.load(ADDUCTS_PATH)
+        fp_index = build_fingerprint_index(fp_vocab)
+
+        df = pd.read_csv(input_csv)
+        required_columns = ["smi", "adduct"]
+        missing_columns = [c for c in required_columns if c not in df.columns]
+        if missing_columns:
+            raise ValueError(f"Missing required columns in {input_csv}: {missing_columns}")
+
+        feature_rows, valid_idx = [], []
+        for i, row in df.iterrows():
+            smi, adduct = str(row["smi"]), str(row["adduct"])
+
+            if adduct not in ADDUCT_OFFSETS:
+                print(f"Skipping row {i}: adduct '{adduct}' not supported")
+                continue
+            if Chem.MolFromSmiles(smi) is None:
+                print(f"Skipping row {i}: invalid SMILES '{smi}'")
+                continue
+
+            charge = calculate_charge(adduct)
+            base = calculate_base_features(smi, charge, adducts, adduct)
+            fp = calculate_sparse_fingerprint(smi)
+
+            feature_rows.append(np.concatenate([base, vectorize_sparse_fp(fp, fp_index)]))
+            valid_idx.append(i)
+
+        if not feature_rows:
+            raise RuntimeError("No rows could be featurized. Check SMILES/adduct values.")
+
+        X = np.asarray(feature_rows, dtype=float)
+
+        predict_start = time.perf_counter()
+        predictions = model.predict(X)
+        predict_time = time.perf_counter() - predict_start
+
+        output_csv = input_csv[:-4] + "_predictions.csv"
+        df["pred_ccs"] = np.nan
+        df.loc[valid_idx, "pred_ccs"] = predictions
+        df.to_csv(output_csv, index=False)
+
+        print(f"Wrote: {output_csv}")
+        print(f"Predicted rows: {len(valid_idx)} / {len(df)}")
+        if len(valid_idx) != len(df):
+            print("Some rows were skipped because of unsupported adducts or invalid SMILES (pred_ccs = NaN).")
+        print(
+            f"Inference time: {predict_time:.4f}s for {len(X)} rows "
+            f"({predict_time / max(len(X), 1) * 1000:.3f} ms/row)"
+        )
+
 
 ccs_model = CCSBase2("CCSMLDatabase.db",
                        "train_data.csv",
@@ -223,4 +291,4 @@ ccs_model = CCSBase2("CCSMLDatabase.db",
                        fp_min_count=40
                     )
 ccs_model.fit()
-ccs_model.predict()
+ccs_model.eval()

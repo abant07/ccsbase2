@@ -5,6 +5,7 @@ from rdkit import Chem
 from rdkit.Chem import rdMolDescriptors, rdFingerprintGenerator
 
 from db import Database
+from constants import ADDUCT_OFFSETS
 
 
 # ============ Train / Test Splitting ============
@@ -57,7 +58,7 @@ def train_test_split_custom(
     use_metlin=True,
 ):
     db = Database(database_file)
-    query = "SELECT smi, mass, z, ccs, name, subclass, adduct, tag FROM master_clean WHERE ABS(z) = 1 AND subclass != 'NONE (predicted)'"
+    query = "SELECT smi, mass, z, ccs, name, superclass, class, subclass, adduct, tag FROM master_clean WHERE ABS(z) = 1 AND subclass != 'NONE (predicted)'"
     if not use_metlin:
         query += " AND tag != 'METLIN'"
 
@@ -92,12 +93,12 @@ def normalize_hyperparam_range(value):
 
 # ============ Molecular Feature Calculation ============
 
-def calculate_base_features(smiles: str, ion_mass: float, charge: int, adducts: list, adduct: str):
+def calculate_base_features(smiles: str, charge: int, adducts: list, adduct: str):
     mol = Chem.MolFromSmiles(smiles)
     mol = Chem.AddHs(mol)
 
     molecular_weight = rdMolDescriptors.CalcExactMolWt(mol)
-    adduct_mass = ion_mass - molecular_weight
+    adduct_mass = ADDUCT_OFFSETS[adduct]
 
     adduct_one_hot = [0] * (len(adducts) + 1)
     adduct_index = adducts.index(adduct) if adduct in adducts else len(adducts)
@@ -160,7 +161,7 @@ def build_feature_matrix(base_features, fp_dicts, fp_index):
 def featurize_ccs_dataset(df, adducts):
     base_features, fp_dicts, ccs_values, metadata = [], [], [], []
     for _, row in df.iterrows():
-        base = calculate_base_features(row["smi"], row["mass"], row["z"], adducts, row["adduct"])
+        base = calculate_base_features(row["smi"], row["z"], adducts, row["adduct"])
         fp = calculate_sparse_fingerprint(row["smi"])
         if base is None or fp is None:
             continue

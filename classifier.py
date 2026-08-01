@@ -23,6 +23,10 @@ NOVELTY_DETECTOR_PATH = "ccsbase2_classifier_novelty_detector.joblib"
 ENCODER_PATH = "ccsbase2_classifier_encoder.joblib"
 
 
+def _tag_predicted(values):
+    return np.array([f"{v} (predicted)" if v is not None else None for v in values], dtype=object)
+
+
 class SubclassClassifier:
 
     def __init__(self, database_file, seed, fp_min_count=5, n_iter=20, min_subclass_count=5,
@@ -46,6 +50,13 @@ class SubclassClassifier:
             "subsample": normalize_hyperparam_range(subsample),
             "colsample_bytree": normalize_hyperparam_range(colsample_bytree),
         }
+
+        hierarchy = Database(database_file).read_df(
+            "SELECT DISTINCT subclass, class, superclass FROM master_clean "
+            "WHERE subclass NOT LIKE '%(predicted)' AND subclass IS NOT NULL"
+        )
+        self.subclass_to_class = dict(zip(hierarchy["subclass"], hierarchy["class"]))
+        self.subclass_to_superclass = dict(zip(hierarchy["subclass"], hierarchy["superclass"]))
 
     def fit(self):
         db = Database(self.database_file)
@@ -185,13 +196,20 @@ class SubclassClassifier:
         pred_idx = np.argmax(proba, axis=1)
         pred_class = encoder.inverse_transform(pred_idx)
 
-        predicted_class = np.where(is_novel, "NONE", pred_class)
-        predicted_class = np.array([f"{c} (predicted)" for c in predicted_class], dtype=object)
+        predicted_subclass = np.where(is_novel, None, pred_class)
+        predicted_class = np.array([self.subclass_to_class.get(c) for c in predicted_subclass], dtype=object)
+        predicted_superclass = np.array([self.subclass_to_superclass.get(c) for c in predicted_subclass], dtype=object)
 
-        updates = list(zip(predicted_class, data["id"].astype(int)))
-        db.write_many("UPDATE master_clean SET subclass = ? WHERE id = ?", updates)
+        predicted_subclass = _tag_predicted(predicted_subclass)
+        predicted_class = _tag_predicted(predicted_class)
+        predicted_superclass = _tag_predicted(predicted_superclass)
 
-        print(f"Updated {len(updates)} rows in master_clean.subclass")
+        updates = list(zip(predicted_subclass, predicted_class, predicted_superclass, data["id"].astype(int)))
+        db.write_many(
+            "UPDATE master_clean SET subclass = ?, class = ?, superclass = ? WHERE id = ?", updates
+        )
+
+        print(f"Updated {len(updates)} rows in master_clean.subclass/class/superclass")
         print(f"  Flagged NONE via novelty gate: {is_novel.sum()}")
 
 
