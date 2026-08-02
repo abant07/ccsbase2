@@ -12,7 +12,7 @@ from sklearn.metrics import (
 )
 from scipy.stats import uniform, randint
 
-from constants import ADDUCT_OFFSETS, XGB_INTEGER_HYPERPARAMS
+from constants import ADDUCT_OFFSETS, ADDUCT_STANDARDIZATION, XGB_INTEGER_HYPERPARAMS
 from db import Database
 from utils import calculate_charge
 from training_utils import (
@@ -233,8 +233,8 @@ class CCSBase2:
         for i, row in df.iterrows():
             smi, adduct = str(row["smi"]), str(row["adduct"])
 
-            if adduct not in ADDUCT_OFFSETS:
-                print(f"Skipping row {i}: adduct '{adduct}' not supported")
+            if ADDUCT_STANDARDIZATION.get(adduct, adduct) not in ADDUCT_OFFSETS:
+                print(f"Skipping row {i}: adduct '{adduct}' not supported. See constants.py for supported adducts.")
                 continue
             if Chem.MolFromSmiles(smi) is None:
                 print(f"Skipping row {i}: invalid SMILES '{smi}'")
@@ -257,14 +257,14 @@ class CCSBase2:
         predict_time = time.perf_counter() - predict_start
 
         output_csv = input_csv[:-4] + "_predictions.csv"
-        df["pred_ccs"] = np.nan
-        df.loc[valid_idx, "pred_ccs"] = predictions
+        df["ccs_pred"] = np.nan
+        df.loc[valid_idx, "ccs_pred"] = predictions
         df.to_csv(output_csv, index=False)
 
         print(f"Wrote: {output_csv}")
         print(f"Predicted rows: {len(valid_idx)} / {len(df)}")
         if len(valid_idx) != len(df):
-            print("Some rows were skipped because of unsupported adducts or invalid SMILES (pred_ccs = NaN).")
+            print("Some rows were skipped because of unsupported adducts or invalid SMILES (ccs_pred = NaN).")
         print(
             f"Inference time: {predict_time:.4f}s for {len(X)} rows "
             f"({predict_time / max(len(X), 1) * 1000:.3f} ms/row)"
@@ -286,3 +286,4 @@ ccs_model = CCSBase2("CCSMLDatabase.db",
                     )
 ccs_model.fit()
 ccs_model.eval()
+ccs_model.predict("ood_testset.csv")
