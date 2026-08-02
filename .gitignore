@@ -10,5 +10,6 @@
 /ccsbase2_classifier_fp_vocab.joblib
 /ccsbase2_classifier_encoder.joblib
 /ccsbase2_classifier_train_fingerprints.joblib
+/ccsbase2_adducts.joblib
 
 /CCSMLDatabase.db

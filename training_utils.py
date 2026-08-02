@@ -49,37 +49,57 @@ def _split_subclass_by_adduct_distribution(subclass_df, test_size, rng):
     return train_groups, test_groups
 
 
+def _split_group_by_column(group_df, column, test_size, rng):
+    train_parts, test_parts = [], []
+    for _, column_df in group_df.groupby(column):
+        train_groups, test_groups = _split_subclass_by_adduct_distribution(column_df, test_size, rng)
+        train_parts.extend(train_groups)
+        test_parts.extend(test_groups)
+    return train_parts, test_parts
+
+
 def train_test_split_custom(
     database_file,
-    train_csv_path,
-    test_csv_path,
     test_size=0.2,
     random_state=26,
     use_metlin=True,
 ):
     db = Database(database_file)
-    query = "SELECT smi, mass, z, ccs, name, superclass, class, subclass, adduct, tag FROM master_clean WHERE ABS(z) = 1 AND subclass != 'NONE (predicted)'"
+    query = "SELECT smi, mass, z, ccs, name, superclass, class, subclass, adduct, tag FROM master_clean"
     if not use_metlin:
-        query += " AND tag != 'METLIN'"
+        query += " WHERE tag != 'METLIN'"
 
     df = db.read_df(query)
 
-    # predicted-subclass rows carry a "(predicted)" suffix that real labels don't
-    df["subclass"] = df["subclass"].str.replace(r" \(predicted\)$", "", regex=True)
+    for column in ("subclass", "class", "superclass"):
+        df[column] = df[column].str.replace(r" \(predicted\)$", "", regex=True)
 
     rng = np.random.default_rng(random_state)
 
+    has_subclass = df["subclass"].notna()
+    has_class = df["class"].notna()
+    has_superclass = df["superclass"].notna()
+
+    subclass_tier = df[has_subclass]
+    class_tier = df[~has_subclass & has_class]
+    superclass_tier = df[~has_subclass & ~has_class & has_superclass]
+    unclassified_tier = df[~has_subclass & ~has_class & ~has_superclass]
+
     train_parts, test_parts = [], []
-    for _, subclass_df in df.groupby("subclass"):
-        train_groups, test_groups = _split_subclass_by_adduct_distribution(subclass_df, test_size, rng)
-        train_parts.extend(train_groups)
-        test_parts.extend(test_groups)
+    for tier_df, column in ((subclass_tier, "subclass"), (class_tier, "class"), (superclass_tier, "superclass")):
+        tier_train, tier_test = _split_group_by_column(tier_df, column, test_size, rng)
+        train_parts.extend(tier_train)
+        test_parts.extend(tier_test)
+        print(f"{len(tier_df)} rows split by {column}")
+
+    train_parts.append(unclassified_tier)
+    print(f"{len(unclassified_tier)} rows with no superclass/class/subclass -- added to training only")
 
     train_df = pd.concat(train_parts, ignore_index=True) if train_parts else pd.DataFrame(columns=df.columns)
     test_df = pd.concat(test_parts, ignore_index=True) if test_parts else pd.DataFrame(columns=df.columns)
 
-    train_df.to_csv(train_csv_path, index=False)
-    test_df.to_csv(test_csv_path, index=False)
+    train_df.to_csv("train_data.csv", index=False)
+    test_df.to_csv("test_data.csv", index=False)
 
     print(len(train_df), "train rows")
     print(len(test_df), "test rows")
@@ -93,18 +113,18 @@ def normalize_hyperparam_range(value):
 
 # ============ Molecular Feature Calculation ============
 
-def calculate_base_features(smiles: str, charge: int, adducts: list, adduct: str):
+def calculate_base_features(smiles: str, ion_mass:float, adducts: list, adduct: str):
     mol = Chem.MolFromSmiles(smiles)
     mol = Chem.AddHs(mol)
 
     molecular_weight = rdMolDescriptors.CalcExactMolWt(mol)
-    adduct_mass = ADDUCT_OFFSETS[adduct]
+    adduct_mass = ion_mass - molecular_weight
 
     adduct_one_hot = [0] * (len(adducts) + 1)
     adduct_index = adducts.index(adduct) if adduct in adducts else len(adducts)
     adduct_one_hot[adduct_index] = 1
 
-    return np.array([molecular_weight, adduct_mass, charge] + adduct_one_hot, dtype=float)
+    return np.array([molecular_weight, adduct_mass] + adduct_one_hot, dtype=float)
 
 
 def calculate_sparse_fingerprint(smiles: str) -> dict:
@@ -168,7 +188,7 @@ def build_feature_matrix(base_features, fp_dicts, fp_index):
 def featurize_ccs_dataset(df, adducts):
     base_features, fp_dicts, ccs_values, metadata = [], [], [], []
     for _, row in df.iterrows():
-        base = calculate_base_features(row["smi"], row["z"], adducts, row["adduct"])
+        base = calculate_base_features(row["smi"], row["mass"], adducts, row["adduct"])
         fp = calculate_sparse_fingerprint(row["smi"])
         if base is None or fp is None:
             continue

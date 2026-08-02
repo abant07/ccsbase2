@@ -41,13 +41,11 @@ ADDUCTS_PATH = "ccsbase2_adducts.joblib"
 
 class CCSBase2:
 
-    def __init__(self, database_file="CCSMLDatabase.db", train_filename="train_data.csv", test_filename="train_data.csv", 
+    def __init__(self, database_file="CCSMLDatabase.db", 
                  n_estimators=600, max_depth=10,
                  learning_rate=0.03, subsample=0.9, colsample_bytree=0.9, reg_lambda=30, min_child_weight=5, gamma=1,
                  seed=26, use_metlin=True, n_iter=20, fp_min_count=40):
         self.database_file = database_file
-        self.train_file = train_filename
-        self.test_file = test_filename
         self.use_metlin = use_metlin
         self.seed = seed
         self.model = None
@@ -67,20 +65,18 @@ class CCSBase2:
             "gamma": normalize_hyperparam_range(gamma),
         }
 
-        adducts_query = "SELECT adduct FROM master_clean GROUP BY adduct HAVING COUNT(*) >= 100 ORDER BY adduct"
+        adducts_query = "SELECT adduct FROM master_clean GROUP BY adduct HAVING COUNT(*) >= 50 ORDER BY adduct"
         self.adducts = sorted(row[0] for row in Database(database_file).read(adducts_query))
 
         train_test_split_custom(
             database_file=self.database_file,
-            train_csv_path=self.train_file,
-            test_csv_path=self.test_file,
             test_size=0.2,
             random_state=self.seed,
             use_metlin=use_metlin,
         )
 
     def fit(self):
-        train_df = pd.read_csv(self.train_file)
+        train_df = pd.read_csv("train_data.csv")
         base_features, fp_dicts, y, _ = featurize_ccs_dataset(train_df, self.adducts)
 
         self.fp_vocab = build_fingerprint_vocabulary(fp_dicts, self.fp_min_count)
@@ -173,7 +169,7 @@ class CCSBase2:
     def eval(self):
         print("Starting Evaluation on Test Set")
 
-        test_df = pd.read_csv(self.test_file)
+        test_df = pd.read_csv("test_data.csv")
         base_features, fp_dicts, y_test, metadata = featurize_ccs_dataset(test_df, self.adducts)
 
         fp_index = build_fingerprint_index(self.fp_vocab)
@@ -276,8 +272,6 @@ class CCSBase2:
 
 
 ccs_model = CCSBase2("CCSMLDatabase.db",
-                       "train_data.csv",
-                       "test_data.csv",
                        n_estimators=6000,
                        max_depth=10,
                        learning_rate=0.03,
@@ -288,7 +282,7 @@ ccs_model = CCSBase2("CCSMLDatabase.db",
                        gamma=1,
                        seed=26,
                        use_metlin=True,
-                       fp_min_count=40
+                       fp_min_count=5
                     )
 ccs_model.fit()
 ccs_model.eval()
