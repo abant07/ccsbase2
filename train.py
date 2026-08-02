@@ -232,8 +232,9 @@ class CCSBase2:
         feature_rows, valid_idx = [], []
         for i, row in df.iterrows():
             smi, adduct = str(row["smi"]), str(row["adduct"])
+            adduct = ADDUCT_STANDARDIZATION.get(adduct, adduct)
 
-            if ADDUCT_STANDARDIZATION.get(adduct, adduct) not in ADDUCT_OFFSETS:
+            if adduct not in ADDUCT_OFFSETS:
                 print(f"Skipping row {i}: adduct '{adduct}' not supported. See constants.py for supported adducts.")
                 continue
             if Chem.MolFromSmiles(smi) is None:
@@ -284,6 +285,6 @@ ccs_model = CCSBase2("CCSMLDatabase.db",
                        use_metlin=True,
                        fp_min_count=5
                     )
-ccs_model.fit()
-ccs_model.eval()
+# ccs_model.fit()
+# ccs_model.eval()
 ccs_model.predict("ood_testset.csv")

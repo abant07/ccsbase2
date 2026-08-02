@@ -106,6 +106,9 @@ ADDUCT_OFFSETS = {
     '[M-2H]2-': -2 * ATOMIC_MASSES['H'],
     '[M+2K]2+': 2 * ATOMIC_MASSES['K'],
     '[M-2Cl]2+': -2 * ATOMIC_MASSES['Cl'],
+
+    '[M-CH3]-': -(ATOMIC_MASSES['C'] + 3 * ATOMIC_MASSES['H']),
+    '[M+OH]-': ATOMIC_MASSES['O'] + ATOMIC_MASSES['H'],
 }
 
 ADDUCT_STANDARDIZATION = {
@@ -126,6 +129,9 @@ ADDUCT_STANDARDIZATION = {
     "[M-CO2-H]-": "[M-H-CO2]-",
     "[M+H3C2O2]-": "[M+CH3COO]-",
     "[M+FA-H]-": "[M+HCOO]-",
+    "M-H+2K": "[M-H+2K]+",
+    "M-H+2Na": "[M+2Na-H]+",
+    "M-H2O-H": "[M-H-H2O]-",
 }
 
 XGB_INTEGER_HYPERPARAMS = {"n_estimators", "max_depth"}
