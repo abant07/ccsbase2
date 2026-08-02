@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-from rdkit import Chem
+from rdkit import Chem, DataStructs
 from rdkit.Chem import rdMolDescriptors, rdFingerprintGenerator
 
 from db import Database
@@ -119,6 +119,13 @@ def calculate_sparse_fingerprint(smiles: str) -> dict:
 
 def calculate_sparse_fingerprints(smiles_series) -> list:
     return [calculate_sparse_fingerprint(smi) for smi in smiles_series]
+
+
+def to_rdkit_fingerprint(fp_dict: dict):
+    fp = DataStructs.ULongSparseIntVect(2 ** 64 - 1)
+    for env_id, count in fp_dict.items():
+        fp[env_id] = count
+    return fp
 
 
 # ============ Fingerprint Vocabulary + Vectorization ============

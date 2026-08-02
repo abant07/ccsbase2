@@ -4,7 +4,11 @@
 # Bulky ML artifacts — ignore only at repo root so you can commit copies under
 # fingerprint_explorer/ (or elsewhere) for Streamlit / sharing without git add -f.
 /ccsbase2.joblib
-/ccsbase2_classifier.joblib
 /ccsbase2_fp_vocab.joblib
-/ccsbase2.json
+
+/ccsbase2_classifier.joblib
+/ccsbase2_classifier_fp_vocab.joblib
+/ccsbase2_classifier_encoder.joblib
+/ccsbase2_classifier_train_fingerprints.joblib
+
 /CCSMLDatabase.db
