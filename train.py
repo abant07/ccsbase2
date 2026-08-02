@@ -5,6 +5,7 @@ import numpy as np
 import joblib
 
 from rdkit import Chem
+from rdkit.Chem import rdMolDescriptors
 from xgboost import XGBRegressor
 from sklearn.model_selection import KFold, RandomizedSearchCV
 from sklearn.metrics import (
@@ -237,12 +238,15 @@ class CCSBase2:
             if adduct not in ADDUCT_OFFSETS:
                 print(f"Skipping row {i}: adduct '{adduct}' not supported. See constants.py for supported adducts.")
                 continue
-            if Chem.MolFromSmiles(smi) is None:
+            mol = Chem.MolFromSmiles(smi)
+            if mol is None:
                 print(f"Skipping row {i}: invalid SMILES '{smi}'")
                 continue
 
             charge = calculate_charge(adduct)
-            base = calculate_base_features(smi, charge, adducts, adduct)
+            neutral_mass = rdMolDescriptors.CalcExactMolWt(Chem.AddHs(mol))
+            ion_mass = abs((neutral_mass + ADDUCT_OFFSETS[adduct]) / charge)
+            base = calculate_base_features(smi, ion_mass, adducts, adduct)
             fp = calculate_sparse_fingerprint(smi)
 
             feature_rows.append(np.concatenate([base, vectorize_sparse_fp(fp, fp_index)]))
@@ -285,6 +289,6 @@ ccs_model = CCSBase2("CCSMLDatabase.db",
                        use_metlin=True,
                        fp_min_count=5
                     )
-# ccs_model.fit()
-# ccs_model.eval()
+ccs_model.fit()
+ccs_model.eval()
 ccs_model.predict("ood_testset.csv")

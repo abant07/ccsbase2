@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 from rdkit import Chem, DataStructs
-from rdkit.Chem import rdMolDescriptors, rdFingerprintGenerator
+from rdkit.Chem import Descriptors, rdMolDescriptors, rdFingerprintGenerator
 
 from db import Database
 from constants import ADDUCT_OFFSETS
@@ -115,8 +115,9 @@ def normalize_hyperparam_range(value):
 
 def calculate_base_features(smiles: str, ion_mass:float, adducts: list, adduct: str):
     mol = Chem.MolFromSmiles(smiles)
-    mol = Chem.AddHs(mol)
+    mqns = Descriptors.rdMolDescriptors.MQNs_(mol)
 
+    mol = Chem.AddHs(mol)
     molecular_weight = rdMolDescriptors.CalcExactMolWt(mol)
     adduct_mass = ion_mass - molecular_weight
 
@@ -124,7 +125,7 @@ def calculate_base_features(smiles: str, ion_mass:float, adducts: list, adduct: 
     adduct_index = adducts.index(adduct) if adduct in adducts else len(adducts)
     adduct_one_hot[adduct_index] = 1
 
-    return np.array([molecular_weight, adduct_mass] + adduct_one_hot, dtype=float)
+    return np.array([molecular_weight, adduct_mass] + adduct_one_hot + list(mqns), dtype=float)
 
 
 def calculate_sparse_fingerprint(smiles: str) -> dict:
