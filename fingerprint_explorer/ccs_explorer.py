@@ -1,12 +1,11 @@
+import sys
 import streamlit as st
-import sqlite3
 import pandas as pd
 import numpy as np
 from pathlib import Path
 from rdkit import Chem
-from rdkit.Chem import rdFingerprintGenerator, rdMolDescriptors
+from rdkit.Chem import rdFingerprintGenerator
 from rdkit.Chem.Draw import rdMolDraw2D
-from rdkit import DataStructs
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -21,6 +20,16 @@ st.set_page_config(layout="wide", page_title="CCS Fingerprint Explorer", page_ic
 # ── Config ─────────────────────────────────────────────────────────────────────
 _APP_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _APP_DIR.parent
+sys.path.insert(0, str(_REPO_ROOT))
+
+from utils import (  # noqa: E402
+    calculate_base_features,
+    calculate_sparse_fingerprint,
+    load_or_build_fingerprint_vocabulary,
+    build_fingerprint_index,
+    build_feature_matrix_sparse,
+    train_test_split_custom,
+)
 
 
 def _resolve_existing_file(description: str, candidates: tuple[Path, ...]) -> str:
@@ -31,9 +40,8 @@ def _resolve_existing_file(description: str, candidates: tuple[Path, ...]) -> st
     lines = "\n  ".join(str(p) for p in candidates)
     raise FileNotFoundError(
         f"{description} not found. Checked:\n  {lines}\n"
-        "Add ccsbase2.joblib and CCSMLDatabase.db to the deployed repo "
-        "(README download links). If they are listed in .gitignore, remove those "
-        "entries or place copies Streamlit can clone."
+        f"Add {description} to the deployed repo (README download links). "
+        "If it is listed in .gitignore, remove that entry or place a copy Streamlit can clone."
     )
 
 
@@ -54,9 +62,26 @@ MODEL_PATH = _resolve_existing_file(
         _APP_DIR / "ccsbase2.joblib",
     ),
 )
+FP_VOCAB_PATH = _resolve_existing_file(
+    "ccsbase2_fp_vocab.joblib",
+    (
+        _REPO_ROOT / "ccsbase2" / "ccsbase2_fp_vocab.joblib",
+        _REPO_ROOT / "ccsbase2_fp_vocab.joblib",
+        _APP_DIR / "ccsbase2_fp_vocab.joblib",
+    ),
+)
+ADDUCTS_PATH = _resolve_existing_file(
+    "ccsbase2_adduct_list.joblib",
+    (
+        _REPO_ROOT / "ccsbase2" / "ccsbase2_adduct_list.joblib",
+        _REPO_ROOT / "ccsbase2_adduct_list.joblib",
+        _APP_DIR / "ccsbase2_adduct_list.joblib",
+    ),
+)
 IMG_W, IMG_H = 400, 350
 WATERFALL_W  = 500
 PAGE_SIZE    = 5
+SHAP_MAX_DISPLAY = 12  # how many features the waterfall plot shows -- also drives the bit-picker candidates
 
 BIT_COLORS = [
     (0.95, 0.25, 0.25),
@@ -92,81 +117,54 @@ def load_model():
         return _BoosterWrapper(booster)
     return joblib.load(MODEL_PATH)
 
-@st.cache_data
-def load_subclass_counts():
-    con = sqlite3.connect(DB_PATH)
-    df_counts = pd.read_sql(
-        "SELECT subclass, COUNT(*) as cnt FROM master_clean GROUP BY subclass ORDER BY cnt DESC",
-        con
-    )
-    adducts_df = pd.read_sql(
-        "SELECT adduct FROM master_clean GROUP BY adduct HAVING COUNT(*) >= 100 ORDER BY adduct",
-        con
-    )
-    con.close()
-    df_counts = df_counts[
-        ~df_counts["subclass"].str.contains("(predicted)", regex=False)
-    ].reset_index(drop=True)
-    adducts = [a[0] for a in sorted(adducts_df.to_numpy().tolist())]
-    return df_counts, adducts
+@st.cache_resource
+def load_fp_vocab():
+    return load_or_build_fingerprint_vocabulary(DB_PATH, FP_VOCAB_PATH)
+
+@st.cache_resource
+def load_adducts():
+    return joblib.load(ADDUCTS_PATH)
 
 @st.cache_data
-def load_subclass_data(subclass):
-    con = sqlite3.connect(DB_PATH)
-    df = pd.read_sql(
-        "SELECT smi, subclass, ccs, mass, z, adduct FROM master_clean WHERE subclass = ?",
-        con, params=(subclass,)
+def load_test_set():
+    """Same split train.py uses (same seed) so the explorer only ever shows held-out molecules."""
+    train_test_split_custom(
+        database_file=DB_PATH,
+        test_size=0.2,
+        random_state=26,
+        use_metlin=True,
     )
-    con.close()
-    return df
+    return pd.read_csv("test_data.csv")
 
-# ── Fingerprint generators ─────────────────────────────────────────────────────
-morgan_count_fpgen = rdFingerprintGenerator.GetMorganGenerator(
-    radius=2, fpSize=1024, includeChirality=True, countSimulation=True
-)
-morgan_bit_fpgen = rdFingerprintGenerator.GetMorganGenerator(
-    radius=2, fpSize=1024, includeChirality=True
-)
+# ── Fingerprint generator (bit-info only; actual model features come from utils.py) ────────────
+morgan_bitinfo_fpgen = rdFingerprintGenerator.GetMorganGenerator(radius=2, includeChirality=True)
 
 def sanitize(name):
     return (name.replace("[", "").replace("]", "").replace("<", "")
                 .replace("+", "plus").replace("-", "minus"))
 
-def featurise_all(df_sub, ADDUCTS):
-    """Featurise every molecule. Returns parallel lists + valid-row DataFrame."""
-    feat_rows, mols, bit_infos, valid_rows = [], [], [], []
+def featurise_all(df_sub, adducts, fp_index):
+    """Featurise every molecule using the exact same feature functions as train.py. Returns X (sparse) + parallel lists."""
+    base_feats, fp_dicts, mols, bit_infos, valid_rows = [], [], [], [], []
     for _, row in df_sub.iterrows():
         mol = Chem.MolFromSmiles(row["smi"])
         if mol is None:
             continue
         mol = Chem.AddHs(mol)
 
-        feature_values = []
-        mw = rdMolDescriptors.CalcExactMolWt(mol)
-        feature_values.append(mw)
-        feature_values.append(row["mass"] - mw)
-        feature_values.append(row["z"])
-        feature_values.append(rdMolDescriptors.CalcLabuteASA(mol))
-
-        ohe = [0] * (len(ADDUCTS) + 1)
-        ohe[ADDUCTS.index(row["adduct"]) if row["adduct"] in ADDUCTS else len(ADDUCTS)] = 1
-        feature_values.extend(ohe)
-
-        count_fp = morgan_count_fpgen.GetCountFingerprint(mol)
-        arr = np.zeros((count_fp.GetLength(),), dtype=int)
-        DataStructs.ConvertToNumpyArray(count_fp, arr)
-        feature_values.extend(arr.tolist())
+        base_feats.append(calculate_base_features(row["smi"], row["mass"], adducts, row["adduct"]))
+        fp_dicts.append(calculate_sparse_fingerprint(row["smi"]))
 
         ao = rdFingerprintGenerator.AdditionalOutput()
         ao.AllocateBitInfoMap()
-        morgan_bit_fpgen.GetFingerprint(mol, additionalOutput=ao)
+        morgan_bitinfo_fpgen.GetSparseCountFingerprint(mol, additionalOutput=ao)
 
-        feat_rows.append(np.array(feature_values))
         mols.append(mol)
         bit_infos.append(ao.GetBitInfoMap())
         valid_rows.append(row)
 
-    return feat_rows, mols, bit_infos, pd.DataFrame(valid_rows).reset_index(drop=True)
+    X_full = build_feature_matrix_sparse(base_feats, fp_dicts, fp_index)
+    return X_full, mols, bit_infos, pd.DataFrame(valid_rows).reset_index(drop=True)
 
 def compute_shap_batch(booster, X_batch, feature_names):
     dm = xgb.DMatrix(X_batch, feature_names=feature_names)
@@ -182,6 +180,11 @@ def ensure_shap(start, end):
     shap_vals, _ = compute_shap_batch(booster, X_batch, feature_names)
     for local_i, global_i in enumerate(missing):
         st.session_state.shap_cache[global_i] = shap_vals[local_i]
+
+def top_fp_bits_for_shap(shap_row, fp_vocab, fp_start_idx, max_display):
+    """Env-ids of the fingerprint features among this molecule's top |SHAP| contributors (same set the waterfall shows)."""
+    top_idx = np.argsort(-np.abs(shap_row))[:max_display]
+    return [fp_vocab[i - fp_start_idx] for i in top_idx if i >= fp_start_idx]
 
 def draw_molecule(mol, active_bits, bit_info, size=(IMG_W, IMG_H)):
     highlight_atoms, highlight_bonds = {}, {}
@@ -226,7 +229,7 @@ def make_waterfall(shap_row, global_base, subclass_base, feature_names,
         feature_names=feature_names,
     )
     fig = plt.figure(figsize=(size[0] / 100, size[1] / 100))
-    shap.plots.waterfall(exp, max_display=12, show=False)
+    shap.plots.waterfall(exp, max_display=SHAP_MAX_DISPLAY, show=False)
     plt.tight_layout()
     buf = io.BytesIO()
     plt.savefig(buf, format="png", bbox_inches="tight", dpi=100)
@@ -255,24 +258,49 @@ for k, v in defaults.items():
 # ── Static data ────────────────────────────────────────────────────────────────
 model      = load_model()
 booster    = model.get_booster()
-df_counts, ADDUCTS = load_subclass_counts()
+adducts    = load_adducts()
+fp_vocab   = load_fp_vocab()
+fp_index   = build_fingerprint_index(fp_vocab)
+test_df    = load_test_set()
 
-feature_names = (
-    ["MolecularWeight", "AdductMass", "Charge", "LabuteASA"]
-    + [f"Adduct_{sanitize(a)}" for a in ADDUCTS]
-    + ["Adduct_other"]
-    + [f"MorganFP_{i}" for i in range(1024)]
+df_counts = (
+    test_df["subclass"].value_counts()
+    .rename_axis("subclass")
+    .reset_index(name="cnt")
 )
 
+base_feature_names = (
+    ["MolecularWeight", "AdductMass"]
+    + [f"Adduct_{sanitize(a)}" for a in adducts]
+    + ["Adduct_other"]
+)
+feature_names = base_feature_names + [f"FP_{env_id}" for env_id in fp_vocab]
+fp_start_idx  = len(base_feature_names)
+
 # ── Left sidebar ───────────────────────────────────────────────────────────────
+# Cap the subclass radio list's own height so it scrolls internally, keeping the
+# title/caption/Apply button above it always on screen instead of scrolling away.
+st.markdown(
+    """
+    <style>
+    [data-testid="stSidebar"] [data-testid="stRadio"] {
+        max-height: calc(100vh - 260px);
+        overflow-y: auto;
+        padding-right: 8px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 with st.sidebar:
     st.markdown("## 🔬 Subclass")
-    st.caption("Select a subclass below, then click Apply above.")
+    st.caption("Select a subclass below, then click Apply above. Molecules are drawn from the held-out test set.")
     subclass_labels = [
         f"{row['subclass']}  ({int(row['cnt'])})"
         for _, row in df_counts.iterrows()
     ]
-    apply_subclass = st.button("▶  Apply Subclass", use_container_width=True)
+    apply_subclass = st.button("Apply Subclass", use_container_width=True)
     selected_label = st.radio("Subclass", subclass_labels, label_visibility="collapsed")
 
 selected_subclass = selected_label.rsplit("  (", 1)[0]
@@ -280,35 +308,12 @@ selected_subclass = selected_label.rsplit("  (", 1)[0]
 # ── Layout ─────────────────────────────────────────────────────────────────────
 body_col, right_col = st.columns([5, 1], gap="large")
 
-with right_col:
-    st.markdown("### 🧩 Fingerprint Bits")
-    st.caption("Select up to 5 bits to highlight.")
-    raw_selected = st.multiselect(
-        "Bits", options=list(range(1024)),
-        default=st.session_state.active_bits,
-        format_func=lambda x: f"MorganFP_{x}",
-        label_visibility="collapsed",
-    )
-    if len(raw_selected) > 5:
-        st.warning("Max 5 — only first 5 used.")
-    if st.button("▶  Apply Bits", use_container_width=True):
-        st.session_state.active_bits = raw_selected[:5]
-
-    if st.session_state.active_bits:
-        st.markdown("**Legend:**")
-        for i, bit in enumerate(st.session_state.active_bits):
-            st.markdown(
-                f'<span style="color:{BIT_COLOR_HEX[i]};font-size:18px">■</span> MorganFP_{bit}',
-                unsafe_allow_html=True,
-            )
-
 # ── Apply Subclass ─────────────────────────────────────────────────────────────
 if apply_subclass and selected_subclass != st.session_state.computed_subclass:
     with body_col:
         with st.spinner(f"Featurising all molecules in **{selected_subclass}**…"):
-            df_sub = load_subclass_data(selected_subclass)
-            feat_rows, mols, bit_infos, df_pool = featurise_all(df_sub, ADDUCTS)
-            X_full = np.vstack(feat_rows)
+            df_sub = test_df[test_df["subclass"] == selected_subclass].reset_index(drop=True)
+            X_full, mols, bit_infos, df_pool = featurise_all(df_sub, adducts, fp_index)
 
         with st.spinner("Computing predictions for subclass baseline…"):
             # Fast regular predict over all mols to get subclass baseline
@@ -332,6 +337,56 @@ if apply_subclass and selected_subclass != st.session_state.computed_subclass:
         st.session_state.shap_cache        = {}       # clear old SHAP cache
         st.session_state.n_shown           = PAGE_SIZE
 
+# ── SHAP for the currently visible window (needed by both the bits panel and the body) ─────────
+n_shown = 0
+if st.session_state.computed_subclass is not None:
+    n_shown = min(st.session_state.n_shown, len(st.session_state.mols))
+    with body_col:
+        with st.spinner(f"Computing SHAP for molecules 1–{n_shown}…"):
+            ensure_shap(0, n_shown)
+
+# ── Right sidebar: Fingerprint Bits ─────────────────────────────────────────────
+with right_col:
+    st.markdown("### 🧩 Fingerprint Bits")
+    st.caption(
+        "Candidates are the top SHAP-contributing substructures among the molecules "
+        "currently loaded below. Select up to 5 to highlight."
+    )
+
+    candidate_bits, seen = [], set()
+    for i in range(n_shown):
+        shap_row = st.session_state.shap_cache.get(i)
+        if shap_row is None:
+            continue
+        for bit in top_fp_bits_for_shap(shap_row, fp_vocab, fp_start_idx, SHAP_MAX_DISPLAY):
+            if bit not in seen:
+                seen.add(bit)
+                candidate_bits.append(bit)
+
+    if not candidate_bits:
+        st.caption("Apply a subclass to see candidate bits.")
+        raw_selected = []
+    else:
+        default_bits = [b for b in st.session_state.active_bits if b in candidate_bits]
+        raw_selected = st.multiselect(
+            "Bits", options=candidate_bits,
+            default=default_bits,
+            format_func=lambda x: f"FP_{x}",
+            label_visibility="collapsed",
+        )
+    if len(raw_selected) > 5:
+        st.warning("Max 5 — only first 5 used.")
+    if st.button("Apply Bits", use_container_width=True):
+        st.session_state.active_bits = raw_selected[:5]
+
+    if st.session_state.active_bits:
+        st.markdown("**Legend:**")
+        for i, bit in enumerate(st.session_state.active_bits):
+            st.markdown(
+                f'<span style="color:{BIT_COLOR_HEX[i]};font-size:18px">■</span> FP_{bit}',
+                unsafe_allow_html=True,
+            )
+
 # ── Body ───────────────────────────────────────────────────────────────────────
 with body_col:
     st.markdown("# 🧪 CCS Fingerprint Explorer")
@@ -341,19 +396,14 @@ with body_col:
     else:
         n        = len(st.session_state.mols)
         sub_base = st.session_state.subclass_base
-        n_shown  = min(st.session_state.n_shown, n)
 
         st.markdown(f"### {st.session_state.computed_subclass}")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total molecules",       n)
+        c1.metric("Total molecules (test set)", n)
         c2.metric("Showing",               n_shown)
         c3.metric("Subclass baseline CCS", f"{sub_base:.2f} Å²")
         c4.metric("Bits highlighted",      len(st.session_state.active_bits))
         st.divider()
-
-        # Compute SHAP on demand — only for the current visible window
-        with st.spinner(f"Computing SHAP for molecules {n_shown - PAGE_SIZE + 1}–{n_shown}…"):
-            ensure_shap(0, n_shown)
 
         active_bits = st.session_state.active_bits
         df_pool     = st.session_state.df_pool
@@ -378,6 +428,17 @@ with body_col:
                     mol_img = draw_molecule(mol, active_bits, bit_info, size=(IMG_W, IMG_H))
                     st.image(mol_img, use_container_width=True)
                     st.caption(smi[:80] + ("…" if len(smi) > 80 else ""))
+
+                    for bit_idx, bit in enumerate(active_bits):
+                        if bit in bit_info:
+                            continue
+                        st.markdown(
+                            f'<span style="color:{BIT_COLOR_HEX[bit_idx % len(BIT_COLOR_HEX)]};'
+                            f'font-size:14px">■</span> '
+                            f'<span style="font-size:13px">FP_{bit} not found in this compound — '
+                            f"the model may be using its absence as a signal.</span>",
+                            unsafe_allow_html=True,
+                        )
 
                 with wf_col:
                     wf_buf = make_waterfall(

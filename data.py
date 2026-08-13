@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 
 from constants import ADDUCT_OFFSETS, ADDUCT_STANDARDIZATION
 from db import Database
@@ -9,11 +10,21 @@ from apis import (
     get_cid_inchikey_from_smiles,
 )
 from utils import calculate_charge, desalt_and_mass
+from constants import ADDUCT_STANDARDIZATION
+
+import sqlite3
+import h5py
+
+from rdkit import Chem, DataStructs
+from rdkit.Chem import rdFingerprintGenerator
+from rdkit.Chem.SaltRemover import SaltRemover
 
 INSERT_MASTER_SQL = """INSERT INTO master(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass)
                         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 INSERT_MASTER_NODIMER_SQL = """INSERT INTO master_nodimer(tag, name, pubchemId, adduct, mass, z, ccs, smi, inchikey, superclass, class, subclass)
                         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+NEAR_DUPLICATE_THRESHOLD = 0.70
+STANDARD_COLS = ["SMILES", "CCS", "Adduct"]
 
 class CCSDataIntegration:
     def __init__(self, db_filename: str):
@@ -294,3 +305,143 @@ class CCSDataIntegration:
         self.db.write_df(df_clean, "master_clean", if_exists="append")
 
         print(f"CLEANING COMPLETE")
+
+    def build_ood_dataset(self, output_csv: str):
+        df1 = pd.read_csv("all_training.csv", usecols=["SMILES", "Label", "Adduct"])
+        df2 = pd.read_csv("Combined dataset.csv")
+        df3 = pd.read_csv("external test set1.csv", usecols=["SMILES", "ccs", "Adduct"])
+        df4 = pd.read_csv("external test set2.csv", usecols=["SMILES", "ccs", "Adduct"])
+        df5 = pd.read_csv("ExternalTestData.csv", usecols=["SMILES", "True CCS", "Adduct"])
+        df6 = pd.read_csv("FD_in-house_test.csv", usecols=["smiles", "CCS", "Adduct"])
+        df7 = pd.read_csv("filtering.csv", usecols=["SMILES", "Average CCS", "Adduct type"])
+        df8 = pd.read_excel("M-H_Testing_Input_SMILES.xlsx", usecols=["Input", "CCS", "Ion Species"])
+        df9 = pd.read_excel("M-H_Training_Input_SMILES.xlsx", usecols=["Input", "CCS", "Ion Species"])
+        df10 = pd.read_csv("TestData.csv", usecols=["SMILES", "True CCS", "Adduct"])
+        df11 = pd.read_csv("TrainData.csv", usecols=["SMILES", "True CCS", "Adduct"])
+        df12 = pd.read_csv("TrainingSet.csv", usecols=["SMILES", "True CCS", "Adduct"])
+
+        def _to_py(x):
+            if isinstance(x, (bytes, np.bytes_)):
+                return x.decode("utf-8", errors="replace")
+            if isinstance(x, np.ndarray) and x.dtype == object:
+                return np.array([_to_py(v) for v in x], dtype=object)
+            return x
+
+
+        def load_group_df(h5_path, group_name):
+            with h5py.File(h5_path, "r") as f:
+                g = f[group_name]
+                return pd.DataFrame({
+                    "SMILES": _to_py(g["SMILES"][()]),
+                    "Adduct": _to_py(g["Adducts"][()]),
+                    "CCS": g["CCS"][()],
+                })
+
+
+        with h5py.File("DATASETS.h5", "r") as f:
+            group_names = list(f.keys())
+        datasets = {name: load_group_df("DATASETS.h5", name) for name in group_names}
+
+        dfs = [df1, df2, df3, df4, df5, df6, df7, df8, df9, df10, df11, df12] + list(datasets.values())
+
+        rename_maps = {
+            1: {"Label": "CCS"}, 7: {"Average CCS": "CCS", "Adduct type": "Adduct"},
+            8: {"Input": "SMILES", "Ion Species": "Adduct"}, 9: {"Input": "SMILES", "Ion Species": "Adduct"},
+            6: {"smiles": "SMILES"},
+        }
+        generic_renames = {"ccs": "CCS", "True CCS": "CCS"}
+
+        standardized_dfs = []
+        for idx, df in enumerate(dfs, start=1):
+            curr_map = rename_maps.get(idx, {}).copy()
+            curr_map.update({k: v for k, v in generic_renames.items() if k in df.columns})
+            df = df.rename(columns=curr_map)
+            standardized_dfs.append(df[STANDARD_COLS])
+
+        merged_df = pd.concat(standardized_dfs, ignore_index=True)
+
+        merged_df = merged_df.dropna(subset=STANDARD_COLS).copy()
+        merged_df["CCS"] = pd.to_numeric(merged_df["CCS"], errors="coerce")
+        merged_df = merged_df.dropna(subset=["CCS"]).copy()
+
+        merged_df["SMILES"] = merged_df["SMILES"].astype(str).str.strip()
+        merged_df["Adduct"] = merged_df["Adduct"].astype(str).str.strip()
+        merged_df["Adduct"] = merged_df["Adduct"].map(ADDUCT_STANDARDIZATION).fillna(merged_df["Adduct"])
+
+        def within_1pct(group):
+            ccs = group["CCS"].astype(float)
+            mean = ccs.mean()
+            if mean == 0:
+                return True
+            return (ccs.max() - ccs.min()) / mean <= 0.01
+
+
+        good_groups = merged_df.groupby(["SMILES", "Adduct"], sort=False).filter(within_1pct)
+        deduped_df = good_groups.groupby(["SMILES", "Adduct"], as_index=False, sort=False).agg(CCS=("CCS", "mean"))
+
+        remover = SaltRemover()
+
+
+        def remove_salts(smiles):
+            mol = Chem.MolFromSmiles(smiles)
+            if not mol:
+                return None
+            mol2 = remover.StripMol(mol)
+            if mol2 is None or mol2.GetNumAtoms() == 0:
+                return None
+            return Chem.MolToSmiles(mol2, isomericSmiles=True)
+
+
+        deduped_df["SMILES"] = deduped_df["SMILES"].apply(remove_salts)
+        deduped_df = deduped_df.dropna(subset=["SMILES"]).copy()
+        deduped_df = deduped_df[deduped_df["SMILES"].str.len() > 0].copy()
+
+        candidate_df = deduped_df.groupby(["SMILES", "Adduct"], as_index=False, sort=False).agg(CCS=("CCS", "mean"))
+        candidate_df = candidate_df.rename(columns={"SMILES": "smi", "Adduct": "adduct", "CCS": "ccs"})
+
+        print(f"Stage 1 -- aggregated candidate pool: {len(candidate_df)} rows, {candidate_df['smi'].nunique()} unique molecules")
+
+        # ============ Stage 2: remove exact smi overlap with current in-distribution data ============
+
+        conn = sqlite3.connect(self.db_filename)
+        in_distribution_smi = set(pd.read_sql_query("SELECT DISTINCT smi FROM master_clean WHERE smi IS NOT NULL", conn)["smi"])
+        conn.close()
+
+        candidate_df = candidate_df[~candidate_df["smi"].isin(in_distribution_smi)].reset_index(drop=True)
+        print(f"Stage 2 -- after removing exact smi overlap: {len(candidate_df)} rows, {candidate_df['smi'].nunique()} unique molecules")
+
+        # ============ Stage 3: remove near-duplicates by nearest-neighbor Tanimoto similarity ============
+
+        morgan_generator = rdFingerprintGenerator.GetMorganGenerator(radius=2, includeChirality=True)
+
+
+        def compute_fingerprints(smiles_series):
+            fps = []
+            for smi in smiles_series:
+                mol = Chem.MolFromSmiles(smi)
+                mol = Chem.AddHs(mol)
+                fps.append(morgan_generator.GetSparseCountFingerprint(mol))
+            return fps
+
+
+        candidate_smi = candidate_df["smi"].drop_duplicates().reset_index(drop=True)
+        candidate_fps = compute_fingerprints(candidate_smi)
+        in_distribution_fps = compute_fingerprints(pd.Series(sorted(in_distribution_smi)))
+
+        nn_similarity = np.array([
+            max(DataStructs.BulkTanimotoSimilarity(fp, in_distribution_fps)) for fp in candidate_fps
+        ])
+
+        novel_smi = set(candidate_smi[nn_similarity < NEAR_DUPLICATE_THRESHOLD])
+        candidate_df = candidate_df[candidate_df["smi"].isin(novel_smi)].reset_index(drop=True)
+        print(
+            f"Stage 3 -- after removing nearest-neighbor Tanimoto similarity >= {NEAR_DUPLICATE_THRESHOLD}: "
+            f"{len(candidate_df)} rows, {candidate_df['smi'].nunique()} unique molecules"
+        )
+
+        # ============ Output ============
+
+        candidate_df.to_csv(output_csv, index=False)
+        print(f"Wrote {len(candidate_df)} rows to {output_csv}")
+
+

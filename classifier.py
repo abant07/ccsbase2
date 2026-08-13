@@ -2,26 +2,22 @@ import numpy as np
 import joblib
 
 from rdkit import DataStructs
-from scipy.stats import uniform, randint
-from sklearn.model_selection import StratifiedKFold, RandomizedSearchCV
+from sklearn.model_selection import StratifiedKFold, GridSearchCV
 from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier
 
-from constants import XGB_INTEGER_HYPERPARAMS
 from db import Database
-from training_utils import (
+from utils import (
     calculate_sparse_fingerprints,
-    build_fingerprint_vocabulary,
+    load_or_build_fingerprint_vocabulary,
     build_fingerprint_index,
-    vectorize_fingerprints,
-    normalize_hyperparam_range,
+    vectorize_fingerprints_sparse,
     to_rdkit_fingerprint,
 )
 
 MODEL_PATH = "ccsbase2_classifier.joblib"
-FP_VOCAB_PATH = "ccsbase2_classifier_fp_vocab.joblib"
-TRAIN_FINGERPRINTS_PATH = "ccsbase2_classifier_train_fingerprints.joblib"
-ENCODER_PATH = "ccsbase2_classifier_encoder.joblib"
+TRAIN_FINGERPRINTS_PATH = "ccsbase2_classifier_fingerprint_list.joblib"
+ENCODER_PATH = "ccsbase2_classifier_labelencoder.joblib"
 
 
 def _tag_predicted(values):
@@ -30,13 +26,13 @@ def _tag_predicted(values):
 
 class SubclassClassifier:
 
-    def __init__(self, database_file, seed, fp_min_count=5, n_iter=20, min_subclass_count=30,
+    def __init__(self, database_file, seed, fp_vocab_file="ccsbase2_fp_vocab.joblib", min_subclass_count=30,
                  novelty_threshold=0.7,
-                 n_estimators=500, max_depth=8, learning_rate=0.05, subsample=0.9, colsample_bytree=0.9):
+                 n_estimators=(500,), max_depth=(8,), learning_rate=(0.05,), subsample=(0.9,), colsample_bytree=(0.9,),
+                 reg_lambda=(1,), gamma=(0,), min_child_weight=(1,)):
         self.database_file = database_file
         self.seed = seed
-        self.fp_min_count = fp_min_count
-        self.n_iter = n_iter
+        self.fp_vocab_file = fp_vocab_file
         self.min_subclass_count = min_subclass_count
         self.novelty_threshold = novelty_threshold
         self.model = None
@@ -46,12 +42,15 @@ class SubclassClassifier:
         self.cv_metrics = None
         self.proxy_ood_fingerprints = None
 
-        self.hyperparam_ranges = {
-            "n_estimators": normalize_hyperparam_range(n_estimators),
-            "max_depth": normalize_hyperparam_range(max_depth),
-            "learning_rate": normalize_hyperparam_range(learning_rate),
-            "subsample": normalize_hyperparam_range(subsample),
-            "colsample_bytree": normalize_hyperparam_range(colsample_bytree),
+        self.param_grid = {
+            "n_estimators": n_estimators,
+            "max_depth": max_depth,
+            "learning_rate": learning_rate,
+            "subsample": subsample,
+            "colsample_bytree": colsample_bytree,
+            "reg_lambda": reg_lambda,
+            "gamma": gamma,
+            "min_child_weight": min_child_weight,
         }
 
         hierarchy = Database(database_file).read_df(
@@ -86,10 +85,10 @@ class SubclassClassifier:
         )
 
         train_fps = calculate_sparse_fingerprints(train_data["smi"])
-        self.fp_vocab = build_fingerprint_vocabulary(train_fps, self.fp_min_count)
+        self.fp_vocab = load_or_build_fingerprint_vocabulary(self.database_file, self.fp_vocab_file)
         fp_index = build_fingerprint_index(self.fp_vocab)
-        X_train = vectorize_fingerprints(train_fps, fp_index)
-        print(f"Fingerprint vocabulary: {len(self.fp_vocab)} substructures kept (min_count={self.fp_min_count})")
+        X_train = vectorize_fingerprints_sparse(train_fps, fp_index)
+        print(f"Fingerprint vocabulary: {len(self.fp_vocab)} substructures (loaded from {self.fp_vocab_file})")
 
         self.encoder = LabelEncoder()
         y_train = self.encoder.fit_transform(train_data["subclass"].values)
@@ -101,22 +100,13 @@ class SubclassClassifier:
         # substructures that vocabulary filtering would otherwise zero out
         self.train_fingerprints = [to_rdkit_fingerprint(fp) for fp in train_fps]
 
-        param_distributions = {}
-        for name, (low, high) in self.hyperparam_ranges.items():
-            is_integer = name in XGB_INTEGER_HYPERPARAMS
-            if low == high:
-                param_distributions[name] = [int(low) if is_integer else low]
-            elif is_integer:
-                param_distributions[name] = randint(int(low), int(high) + 1)
-            else:
-                param_distributions[name] = uniform(loc=low, scale=high - low)
-
         n_folds = 5
+        n_candidates = int(np.prod([len(values) for values in self.param_grid.values()]))
         print(
-            f"Running random search over {list(param_distributions.keys())} "
-            f"({self.n_iter} candidates x {n_folds} folds = {self.n_iter * n_folds} fits)"
+            f"Running grid search over {list(self.param_grid.keys())} "
+            f"({n_candidates} candidates x {n_folds} folds = {n_candidates * n_folds} fits)"
         )
-        search = RandomizedSearchCV(
+        search = GridSearchCV(
             estimator=XGBClassifier(
                 objective="multi:softprob",
                 tree_method="hist",
@@ -124,8 +114,7 @@ class SubclassClassifier:
                 eval_metric="mlogloss",
                 random_state=self.seed,
             ),
-            param_distributions=param_distributions,
-            n_iter=self.n_iter,
+            param_grid=self.param_grid,
             cv=StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=self.seed),
             scoring={
                 "accuracy": "accuracy",
@@ -135,7 +124,8 @@ class SubclassClassifier:
                 "logloss": "neg_log_loss",
             },
             refit="logloss",
-            random_state=self.seed,
+            n_jobs=1,
+            verbose=3,
         )
         search.fit(X_train, y_train)
 
@@ -154,7 +144,6 @@ class SubclassClassifier:
         self.model = search.best_estimator_
 
         joblib.dump(self.model, MODEL_PATH)
-        joblib.dump(self.fp_vocab, FP_VOCAB_PATH)
         joblib.dump(self.train_fingerprints, TRAIN_FINGERPRINTS_PATH)
         joblib.dump(self.encoder, ENCODER_PATH)
 
@@ -178,7 +167,7 @@ class SubclassClassifier:
         print("Starting Inference")
 
         model = joblib.load(MODEL_PATH)
-        fp_vocab = joblib.load(FP_VOCAB_PATH)
+        fp_vocab = joblib.load(self.fp_vocab_file)
         train_fingerprints = joblib.load(TRAIN_FINGERPRINTS_PATH)
         encoder = joblib.load(ENCODER_PATH)
 
@@ -194,7 +183,7 @@ class SubclassClassifier:
 
         fp_index = build_fingerprint_index(fp_vocab)
         fps = calculate_sparse_fingerprints(data["smi"])
-        X_test = vectorize_fingerprints(fps, fp_index)
+        X_test = vectorize_fingerprints_sparse(fps, fp_index)
 
         nn_similarity = np.array([
             max(DataStructs.BulkTanimotoSimilarity(to_rdkit_fingerprint(fp), train_fingerprints))
@@ -214,8 +203,12 @@ class SubclassClassifier:
         looked_up_class = _tag_predicted(looked_up_class)
         looked_up_superclass = _tag_predicted(looked_up_superclass)
 
-        final_class = np.where(data["class"].isna(), looked_up_class, data["class"])
-        final_superclass = np.where(data["superclass"].isna(), looked_up_superclass, data["superclass"])
+        class_is_stale = data["class"].isna() | data["class"].str.contains(r" \(predicted\)$", regex=True, na=False)
+        superclass_is_stale = (
+            data["superclass"].isna() | data["superclass"].str.contains(r" \(predicted\)$", regex=True, na=False)
+        )
+        final_class = np.where(class_is_stale, looked_up_class, data["class"])
+        final_superclass = np.where(superclass_is_stale, looked_up_superclass, data["superclass"])
 
         updates = list(zip(predicted_subclass, final_class, final_superclass, data["id"].astype(int)))
         db.write_many(
@@ -227,13 +220,16 @@ class SubclassClassifier:
 
 
 classifier = SubclassClassifier(
-    "CCSMLDatabase.db", seed=26, fp_min_count=5,
-    n_iter=1, min_subclass_count=30, novelty_threshold=0.7,
-    n_estimators=500,
-    max_depth=8,
-    learning_rate=0.05,
-    subsample=0.9,
-    colsample_bytree=0.9,
+    "CCSMLDatabase.db", seed=26, fp_vocab_file="ccsbase2_fp_vocab.joblib",
+    min_subclass_count=30, novelty_threshold=0.7,
+    n_estimators=[5000, 5500, 6000],
+    max_depth=[8, 9],
+    learning_rate=[0.03, 0.05],
+    subsample=[0.9],
+    colsample_bytree=[0.9],
+    reg_lambda=[30],
+    gamma=[1],
+    min_child_weight=[5],
 )
 
 classifier.fit()

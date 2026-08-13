@@ -8,16 +8,16 @@ A Collision Cross Section prediction model using a XGBoostRegressor model.
 
 ## Dependencies
 
-### 1. Create a Conda environment (Python 3.10)
+### 1. Create a Conda environment (Python 3.12)
 
 ```bash
-conda create -n ccsbase2 python=3.10 -y
+conda create -n ccsbase2 python=3.12 -y
 conda activate ccsbase2
 ```
 
 ### 2. Install
 ```bash
-pip install numpy pandas scikit-learn rdkit xgboost joblib requests matplotlib
+pip install numpy pandas scikit-learn rdkit xgboost joblib requests matplotlib streamlit shap
 ```
 
 ## Building Database
@@ -34,12 +34,7 @@ CCSbase2 aggregates across the 5 different datasets listed below. AllCCS was obt
 - [Dataset found from ACS publication](https://pubs.acs.org/doi/10.1021/acs.jafc.2c00724)
 
 
-#### [Download Prebuilt Database](https://drive.google.com/file/d/1NQy1ZcuRwRlZv2scIgqvrvsFDLFhEewx/view?usp=sharing)
-
-
-#### [Download Model Weights](https://drive.google.com/file/d/1sXutsjETBxTs-SutORb6LLbc_sK6KgdY/view?usp=drive_link)
-
-#### [Download Classifier Model Weights](https://drive.google.com/file/d/1oQHclF7l7GwgjkwnhuK10jfUwT59uXpj/view?usp=drive_link)
+#### [Download Model Weights](https://drive.google.com/file/d/17zLr5OTGReIVL19vkkq5W-RAJ4tJ6mu7/view?usp=sharing)
 
 
 Please note that building the database from scratch takes a very long time as thousands of API calls need to be made. Instructions have been given below.
@@ -63,6 +58,7 @@ ccsml.find_smiles()
 ccsml.find_inchikey()
 ccsml.find_classes()
 ccsml.clean()
+ccsml.build_ood_dataset("ood_testset.csv")
 ```
 
 
@@ -73,60 +69,68 @@ ClassyFire will not identify subclasses for all chemicals, so a XGBClassifier wa
 ```python
 from classifier import SubclassClassifier
 
-classifier = SubclassClassifier("CCSMLDatabase.db", min_class_count=30, seed=26)
+classifier = SubclassClassifier(
+    "CCSMLDatabase.db", seed=26, fp_vocab_file="ccsbase2_fp_vocab.joblib",
+    min_subclass_count=30, novelty_threshold=0.7,
+    n_estimators=[5000, 5500, 6000],
+    max_depth=[8, 9],
+    learning_rate=[0.03, 0.05],
+    subsample=[0.9],
+    colsample_bytree=[0.9],
+    reg_lambda=[30],
+    gamma=[1],
+    min_child_weight=[5],
+)
+
 classifier.fit()
-classifier.predict()
+classifier.eval() # evaluates on proxy OOD set
+classifier.predict() # performes inference on compounds with unknown subclasses
 ```
 
-
-### Build 3D Conformers (Optional)
-
-Abalations have been ran using 3D conformers, however all models we have trained using 3D descriptors perform suboptimally from the current model. This is mostly due to ambiguity with determining the correct conformer that a chemical compound took on while in the mass spectrometry instrument. However, if you would like to try experiments for yourself, run the following code in another file to generate the conformers after you have built the database.
-
-
-```python
-from utils import Utils
-import sqlite3
-
-conn = sqlite3.connect("CCSMLDatabase.db")
-cur = conn.cursor()
-
-smiles = cur.execute("SELECT DISTINCT smi FROM master_clean").fetchall()
-
-conformers_calculated = cur.execute("SELECT smi FROM conformers").fetchall()
-conformer_smiles = set([smi[0] for smi in conformers_calculated])
-
-smiles_reshaped = []
-for smi in smiles:
-    if smi not in conformer_smiles:
-        smiles_reshaped.append(smi)
-
-conformers = Utils().calculate_conformers("CCSMLDatabase.db", smiles_reshaped)
-```
 
 ## Training Model
 
-Run the following code in another file. Set ``use_metlin=False`` to train without METLIN dataset, and set ``subclass_frequency_threshold=N`` where N > 0 to exclude (subclass,adduct) underrepresented groups from training. You can optionally set ``subclass_frequency_threshold=None`` to include all (subclass,adduct) groups.
+Run the following code in another file. Set ``use_metlin=False`` to train without METLIN dataset.
 
 ```python
 from train import CCSBase2
 
-ccs_model = CCSBase2("CCSMLDatabase.db", 
-                       "train_data.csv", 
-                       "test_data.csv",
-                       seed=26,
-                       use_metlin=True, 
-                       subclass_frequency_threshold=40)
+ccs_model = CCSBase2("CCSMLDatabase.db",
+                    n_estimators=[6000, 7000, 8000, 10000, 12000, 14000, 20000],
+                    max_depth=[8, 10, 12, 13, 15],
+                    learning_rate=[0.01, 0.02, 0.03],
+                    subsample=[0.9],
+                    colsample_bytree=[0.5, 0.9],
+                    reg_lambda=[30],
+                    min_child_weight=[1],
+                    gamma=[1],
+                    seed=26,
+                    use_metlin=True,
+                    fp_vocab_file="ccsbase2_fp_vocab.joblib"
+                )
 ccs_model.fit()
-ccs_model.predict()
+ccs_model.eval() # evaluates on test_data.csv
 ```
 
 
 ## Inference
 
-To perform inference, create a .csv file with column names ``smi,adduct`` and ensure saved model is same directory.
-Then run the command in your CLI with your csv filename.
+To perform inference, create a `.csv` file with column names ``smi,adduct`` and use the `CCSBase2` `predict()` method to pass in your .csv file. Optionally, if you're looking to evaluate the model on you're own dataset, pass the column name in your `.csv` that holds the ground truth CCS as a second parameter to `predict()`.
 
 ```bash
-python inference.py ./pretrained/example_inference.csv
+ccs_model = CCSBase2("CCSMLDatabase.db",
+                    n_estimators=[6000, 7000, 8000, 10000, 12000, 14000, 20000],
+                    max_depth=[8, 10, 12, 13, 15],
+                    learning_rate=[0.01, 0.02, 0.03],
+                    subsample=[0.9],
+                    colsample_bytree=[0.5, 0.9],
+                    reg_lambda=[30],
+                    min_child_weight=[1],
+                    gamma=[1],
+                    seed=26,
+                    use_metlin=True,
+                    fp_vocab_file="ccsbase2_fp_vocab.joblib"
+                )
+
+ccs_model.predict("./datasets/ood_testset.csv", "ccs")
 ```
